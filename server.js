@@ -292,7 +292,8 @@ async function planCollectionToBoard(collectionId, userName, startDate, endDate)
     console.log('📅 Verplaats collection naar board...');
     const moveResponse = await axios.post(`${VPLAN_BASE_URL}/collection/${collectionId}/board/${targetBoard.id}`, {
       start: startDate,
-      resources: [matchingResource.id]
+      resources: [matchingResource.id],
+      end: endDate  // Voeg eind datum toe
     }, {
       headers: {
         'x-api-key': VPLAN_API_TOKEN,
@@ -305,12 +306,100 @@ async function planCollectionToBoard(collectionId, userName, startDate, endDate)
     console.log(`📋 Status: ${moveResponse.data.status}`);
     console.log(`👤 Toegewezen aan: ${matchingResource.name}`);
     console.log(`📅 Start datum: ${startDate}`);
+    console.log(`📅 Eind datum: ${endDate}`);
     console.log('🎉 Collection wordt automatisch omgezet naar cards op het board');
+    
+    // Debug: Check of er cards zijn aangemaakt
+    console.log('🔍 Wacht 3 seconden en check of cards zijn aangemaakt...');
+    setTimeout(async () => {
+      try {
+        const updatedCollectionResponse = await axios.get(`${VPLAN_BASE_URL}/collection/${collectionId}`, {
+          headers: {
+            'x-api-key': VPLAN_API_TOKEN,
+            'x-api-env': VPLAN_ENV_ID,
+            'Content-Type': 'application/json'
+          }
+        });
+        console.log('📋 Updated collection status:', updatedCollectionResponse.data.status);
+        console.log('📋 Updated collection board_id:', updatedCollectionResponse.data.board_id);
+        
+        // Probeer cards op te halen voor deze collection
+        const cardsResponse = await axios.get(`${VPLAN_BASE_URL}/card?collection_id=${collectionId}`, {
+          headers: {
+            'x-api-key': VPLAN_API_TOKEN,
+            'x-api-env': VPLAN_ENV_ID,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        console.log('🃏 Cards voor deze collection:', cardsResponse.data);
+        
+        // Check ook alle cards op het board
+        const boardCardsResponse = await axios.get(`${VPLAN_BASE_URL}/card?board_id=${targetBoard.id}`, {
+          headers: {
+            'x-api-key': VPLAN_API_TOKEN,
+            'x-api-env': VPLAN_ENV_ID,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        console.log(`🃏 Alle cards op board ${targetBoard.name}:`, boardCardsResponse.data?.data?.length || 0);
+        
+        // Zoek naar cards die aan Marcel zijn toegewezen
+        const marcelCards = boardCardsResponse.data?.data?.filter(card => 
+          card.resources?.some(resource => resource.id === matchingResource.id)
+        ) || [];
+        
+        console.log(`👤 Cards toegewezen aan ${matchingResource.name}:`, marcelCards.length);
+        if (marcelCards.length > 0) {
+          console.log('📅 Marcel\'s cards:', marcelCards.map(card => ({
+            id: card.id,
+            title: card.title,
+            start: card.start,
+            end: card.end,
+            stage: card.stage?.name
+          })));
+        }
+        
+      } catch (debugError) {
+        console.log('🔍 Debug check failed:', debugError.response?.status, debugError.response?.statusText);
+        console.log('Debug error data:', debugError.response?.data);
+      }
+    }, 3000);
     
   } catch (error) {
     console.log('❌ Automatische planning gefaald:', error.response?.status, error.response?.statusText);
     console.log('Error details:', error.response?.data);
-    console.log('💡 Collection blijft in backlog staan en kan handmatig gepland worden');
+    
+    // Probeer alternatieve methode: Collection update met board_id
+    if (error.response?.status !== 404) {
+      console.log('🔄 Probeer alternatieve methode: Collection updaten...');
+      try {
+        const updateResponse = await axios.put(`${VPLAN_BASE_URL}/collection/${collectionId}`, {
+          name: `Vrij - ${userName}`,
+          description: `Van ${startDate} t/m ${endDate} - Verlofverzoek (Rework ID: ${collectionId})`,
+          due_date: endDate,
+          board_id: boards.length > 0 ? boards[0].id : null,
+          start: startDate,
+          end: endDate
+        }, {
+          headers: {
+            'x-api-key': VPLAN_API_TOKEN,
+            'x-api-env': VPLAN_ENV_ID,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        console.log('✅ Collection geüpdatet met board_id:', updateResponse.data.board_id);
+        console.log('💡 Collection staat nu op het board, mogelijk moet handmatig aan resource worden toegewezen');
+        
+      } catch (updateError) {
+        console.log('❌ Ook alternatieve methode gefaald:', updateError.response?.status);
+        console.log('💡 Collection blijft in backlog staan en kan handmatig gepland worden');
+      }
+    } else {
+      console.log('💡 Collection blijft in backlog staan en kan handmatig gepland worden');
+    }
     
     // Dit is niet kritiek - de collection is wel aangemaakt, alleen niet automatisch gepland
   }
