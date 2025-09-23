@@ -330,9 +330,13 @@ async function planCollectionToBoard(collectionId, userName, startDate, endDate)
       const existingCards = collectionCardsResponse.data?.data || [];
       console.log(`🃏 Gevonden ${existingCards.length} bestaande cards voor collection`);
       
-      if (existingCards.length === 0) {
-        // Maak nieuwe card aan als er geen bestaan
-        console.log('🆕 Maak nieuwe card aan...');
+      // Filter cards die daadwerkelijk bij onze collection horen
+      const ourCards = existingCards.filter(card => card.collection_id === collectionId);
+      console.log(`🎯 Cards die daadwerkelijk bij onze collection ${collectionId} horen: ${ourCards.length}`);
+      
+      if (ourCards.length === 0) {
+        // Maak nieuwe card aan als er geen bestaan voor onze collection
+        console.log('🆕 Maak nieuwe card aan voor onze collection...');
         const newCardResponse = await axios.post(`${VPLAN_BASE_URL}/card`, {
           collection_id: collectionId,
           board_id: targetBoard.id,
@@ -350,21 +354,41 @@ async function planCollectionToBoard(collectionId, userName, startDate, endDate)
         });
         console.log('✅ Nieuwe card aangemaakt!', newCardResponse.data.id);
       } else {
-        // Update bestaande cards
-        for (const card of existingCards) {
+        // Update bestaande cards die wel bij onze collection horen
+        for (const card of ourCards) {
           console.log(`🔄 Update card ${card.id} met resource assignment...`);
-          await axios.put(`${VPLAN_BASE_URL}/card/${card.id}`, {
-            resource_ids: [matchingResource.id],
-            start_date: startDate,
-            end_date: endDate
-          }, {
-            headers: {
-              'x-api-key': VPLAN_API_TOKEN,
-              'x-api-env': VPLAN_ENV_ID,
-              'Content-Type': 'application/json'
+          // Probeer eerst PATCH method
+          try {
+            await axios.patch(`${VPLAN_BASE_URL}/card/${card.id}`, {
+              resource_ids: [matchingResource.id],
+              start_date: startDate,
+              end_date: endDate
+            }, {
+              headers: {
+                'x-api-key': VPLAN_API_TOKEN,
+                'x-api-env': VPLAN_ENV_ID,
+                'Content-Type': 'application/json'
+              }
+            });
+            console.log(`✅ Card ${card.id} bijgewerkt met PATCH`);
+          } catch (patchError) {
+            console.log(`⚠️  PATCH gefaald, probeer POST voor resource assignment...`);
+            // Alternatieve methode: resource assignment via aparte endpoint
+            try {
+              await axios.post(`${VPLAN_BASE_URL}/card/${card.id}/resource`, {
+                resource_id: matchingResource.id
+              }, {
+                headers: {
+                  'x-api-key': VPLAN_API_TOKEN,
+                  'x-api-env': VPLAN_ENV_ID,
+                  'Content-Type': 'application/json'
+                }
+              });
+              console.log(`✅ Resource toegewezen aan card ${card.id}`);
+            } catch (resourceError) {
+              console.log(`❌ Resource assignment gefaald:`, resourceError.response?.status, resourceError.response?.data);
             }
-          });
-          console.log(`✅ Card ${card.id} bijgewerkt`);
+          }
         }
       }
     } catch (cardError) {
