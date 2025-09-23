@@ -25,7 +25,7 @@ Deze webhook server luistert naar events van Rework en voert automatisch acties 
 
 3. Configureer je API tokens:
    - Vervang `jouw-vplan-api-token` in `server.js` met je echte vPlan API token
-   - Configureer je Rework webhook URL naar deze server
+   - Configureer je Rework webhook URL naar: `https://rework-kiaa.onrender.com/webhook/rework`
 
 4. Start de server:
    ```bash
@@ -49,7 +49,7 @@ De server draait standaard op poort 3000, of de poort die gespecificeerd is in d
 Zorg ervoor dat je de volgende instellingen configureert:
 
 1. **vPlan API Token**: Vervang de placeholder in `server.js`
-2. **Webhook URL**: Configureer in Rework de webhook URL naar: `http://jouw-server.com/webhook/rework`
+2. **Webhook URL**: Configureer in Rework de webhook URL naar: `https://rework-kiaa.onrender.com/webhook/rework`
 3. **User Mapping**: Implementeer de `findCardIdForRequest` functie voor het koppelen van Rework requests aan vPlan kaarten
 
 ## Ontwikkeling
@@ -61,6 +61,19 @@ node server.js
 ```
 
 Voor productie gebruik je waarschijnlijk een process manager zoals PM2 of deploy je naar een cloud platform.
+
+## Deployment
+
+Deze applicatie is momenteel gedeployed op Render en beschikbaar op:
+**https://rework-kiaa.onrender.com**
+
+### Webhook URL voor Rework configuratie:
+`https://rework-kiaa.onrender.com/webhook/rework`
+
+### Deploy naar Render:
+1. Verbind je GitHub repository met Render
+2. Zorg ervoor dat de `PORT` environment variabele wordt gebruikt (automatisch door Render)
+3. Configureer eventuele andere environment variabelen (zoals API tokens)
 
 ## TODO
 
