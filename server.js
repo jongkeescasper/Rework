@@ -9,6 +9,38 @@ const VPLAN_API_TOKEN = process.env.VPLAN_API_TOKEN || '6esaJiXSXzYsbP3bu9syuyU3
 const VPLAN_ENV_ID = process.env.VPLAN_ENV_ID || 'a27baf4e67847b0ac7b48bc3ed099a5203e535a5';
 const VPLAN_BASE_URL = `https://api.vplan.com/v1/environments/${VPLAN_ENV_ID}`;
 
+// Helper function om card ID te vinden voor een Rework request
+// In een echte implementatie zou je dit in een database opslaan
+async function findCardIdForRequest(requestId) {
+  try {
+    // Voor nu: zoek in alle collections naar een titel die de request bevat
+    console.log(`Zoek collection voor Rework request ${requestId}`);
+    
+    const collectionsResponse = await axios.get(`${VPLAN_BASE_URL}/collections`, {
+      headers: {
+        'X-API-Key': VPLAN_API_TOKEN,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    // Zoek collection die overeenkomt met dit request
+    // (dit is een simplified zoekfunctie - in praktijk zou je dit beter doen)
+    for (const collection of collectionsResponse.data || []) {
+      if (collection.description && collection.description.includes(`Rework ID: ${requestId}`)) {
+        console.log(`Gevonden collection ${collection.id} voor request ${requestId}`);
+        return collection.id;
+      }
+    }
+    
+    console.log(`Geen collection gevonden voor request ${requestId}`);
+    return null;
+    
+  } catch (error) {
+    console.log('Error finding collection:', error.message);
+    return null;
+  }
+}
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
@@ -62,7 +94,7 @@ app.post('/webhook/rework', async (req, res) => {
 
     // Definieer mapping
     const title = `Vrij - ${reqData.user.name}`;
-    const description = `Van ${reqData.first_date} t/m ${reqData.last_date} - ${reqData.request_type?.name || 'Verlofverzoek'}`;
+    const description = `Van ${reqData.first_date} t/m ${reqData.last_date} - ${reqData.request_type?.name || 'Verlofverzoek'} (Rework ID: ${reqData.id})`;
     const start = reqData.first_date;
     const end = reqData.last_date;
     const assignedTo = [ reqData.user.reference ];  // of een interne mapping user → vPlan user-id
@@ -71,39 +103,55 @@ app.post('/webhook/rework', async (req, res) => {
     console.log('vPlan data:', { title, description, start, end, assignedTo });
 
     if (event === 'request_created') {
-      // nieuwe kaart in vPlan
-      console.log('Maak nieuwe vPlan kaart aan...');
+      // nieuwe collection in vPlan (collections bevatten cards)
+      console.log('Maak nieuwe vPlan collection aan...');
       
-      // Test eerst wat de vPlan API endpoints zijn
       try {
-        console.log('Test vPlan API endpoints...');
-        const testResponse = await axios.get(`${VPLAN_BASE_URL}`, {
+        // Probeer een collection aan te maken
+        const collectionData = {
+          title: title,
+          description: description,
+          start_date: start,
+          end_date: end,
+          // Voeg eventueel board_id toe als je weet op welk board dit moet
+        };
+        
+        console.log('Collection data:', collectionData);
+        
+        const response = await axios.post(`${VPLAN_BASE_URL}/collections`, collectionData, {
           headers: {
             'X-API-Key': VPLAN_API_TOKEN,
             'Content-Type': 'application/json'
           }
         });
-        console.log('vPlan base endpoint response:', testResponse.data);
-      } catch (testError) {
-        console.log('vPlan base endpoint test failed:', testError.message);
-      }
-      
-      // Probeer verschillende endpoints
-      const possibleEndpoints = ['/cards', '/items', '/tasks', '/events', '/appointments'];
-      
-      for (const endpoint of possibleEndpoints) {
+        
+        console.log('✅ vPlan collection aangemaakt:', response.data);
+        
+        // Sla de collection ID op voor later gebruik
+        // TODO: Implementeer database opslag voor collection_id ↔ rework_request_id mapping
+        
+      } catch (error) {
+        console.log('❌ Collection creation failed, trying alternative endpoints...');
+        console.log('Error:', error.response?.status, error.response?.statusText);
+        console.log('Error data:', error.response?.data);
+        
+        // Fallback: probeer gewoon cards endpoint
         try {
-          console.log(`Testing GET ${VPLAN_BASE_URL}${endpoint}`);
-          const response = await axios.get(`${VPLAN_BASE_URL}${endpoint}`, {
+          const cardResponse = await axios.post(`${VPLAN_BASE_URL}/cards`, {
+            title,
+            description,
+            start,
+            end,
+            assignedTo
+          }, {
             headers: {
               'X-API-Key': VPLAN_API_TOKEN,
               'Content-Type': 'application/json'
             }
           });
-          console.log(`✅ ${endpoint} works:`, response.status);
-          console.log(`${endpoint} data sample:`, JSON.stringify(response.data).substring(0, 200));
-        } catch (error) {
-          console.log(`❌ ${endpoint} failed:`, error.response?.status, error.message);
+          console.log('✅ vPlan card aangemaakt (fallback):', cardResponse.data);
+        } catch (cardError) {
+          console.log('❌ Card creation also failed:', cardError.response?.status, cardError.message);
         }
       }
     } else if (event === 'request_updated') {
@@ -137,31 +185,30 @@ app.post('/webhook/rework', async (req, res) => {
           console.log('Status gewijzigd naar in behandeling');
         }
         
-        console.log('Update vPlan kaart:', cardId);
-        await axios.patch(`${VPLAN_BASE_URL}/cards/${cardId}`, {
+        console.log('Update vPlan collection:', cardId);
+        await axios.patch(`${VPLAN_BASE_URL}/collections/${cardId}`, {
           title: updatedTitle,
           description: updatedDescription,
-          start,
-          end,
-          assignedTo
+          start_date: start,
+          end_date: end
         }, {
           headers: { 'X-API-Key': VPLAN_API_TOKEN, 'Content-Type': 'application/json' }
         });
-        console.log('vPlan kaart bijgewerkt');
+        console.log('vPlan collection bijgewerkt');
       } else {
-        console.log('Geen card ID gevonden voor request:', reqData.id);
+        console.log('Geen collection ID gevonden voor request:', reqData.id);
       }
     } else if (event === 'request_destroyed') {
       const cardId = await findCardIdForRequest(reqData.id);
       if (cardId) {
-        console.log('Verwijder vPlan kaart:', cardId);
+        console.log('Verwijder vPlan collection:', cardId);
         // Bijvoorbeeld verwijderen of markeren als "geannuleerd"
-        await axios.delete(`${VPLAN_BASE_URL}/cards/${cardId}`, {
+        await axios.delete(`${VPLAN_BASE_URL}/collections/${cardId}`, {
           headers: { 'X-API-Key': VPLAN_API_TOKEN }
         });
-        console.log('vPlan kaart verwijderd');
+        console.log('vPlan collection verwijderd');
       } else {
-        console.log('Geen card ID gevonden voor request:', reqData.id);
+        console.log('Geen collection ID gevonden voor request:', reqData.id);
       }
     } else {
       console.log('Onbekend event:', event);
