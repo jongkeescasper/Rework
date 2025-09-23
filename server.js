@@ -5,8 +5,11 @@ const axios = require('axios');
 const app = express();
 app.use(bodyParser.json());
 
-const VPLAN_API_TOKEN = 'jouw-vplan-api-token';
+const VPLAN_API_TOKEN = process.env.VPLAN_API_TOKEN || 'jouw-vplan-api-token';
 const VPLAN_BASE_URL = 'https://api.vplan.com/v1';
+
+// Check of vPlan is geconfigureerd
+const isVPlanConfigured = VPLAN_API_TOKEN !== 'jouw-vplan-api-token';
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -68,6 +71,17 @@ app.post('/webhook/rework', async (req, res) => {
 
     console.log('Verwerk event:', event);
     console.log('vPlan data:', { title, description, start, end, assignedTo });
+
+    if (!isVPlanConfigured) {
+      console.log('⚠️  vPlan niet geconfigureerd - webhook ontvangen maar geen actie ondernomen');
+      console.log('💡 Configureer VPLAN_API_TOKEN environment variabele om vPlan integratie te activeren');
+      return res.status(200).json({ 
+        message: 'Webhook ontvangen - vPlan integratie niet actief',
+        event: event,
+        data: { title, description, start, end, assignedTo },
+        note: 'Configureer VPLAN_API_TOKEN om vPlan integratie te activeren'
+      });
+    }
 
     if (event === 'request_created') {
       // nieuwe kaart in vPlan
