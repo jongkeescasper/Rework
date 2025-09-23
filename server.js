@@ -85,6 +85,42 @@ app.post('/webhook/rework', async (req, res) => {
         }
       });
       console.log('vPlan kaart aangemaakt:', response.data);
+    } else if (event === 'request_approved') {
+      // Verlofverzoek goedgekeurd - update kaart status
+      const cardId = await findCardIdForRequest(reqData.id);
+      if (cardId) {
+        console.log('Update vPlan kaart status naar goedgekeurd:', cardId);
+        await axios.patch(`${VPLAN_BASE_URL}/cards/${cardId}`, {
+          title: `✅ ${title}`,
+          description: `${description} - GOEDGEKEURD`,
+          start,
+          end,
+          assignedTo
+        }, {
+          headers: { 'Authorization': `Bearer ${VPLAN_API_TOKEN}`, 'Content-Type': 'application/json' }
+        });
+        console.log('vPlan kaart status bijgewerkt naar goedgekeurd');
+      } else {
+        console.log('Geen card ID gevonden voor request:', reqData.id);
+      }
+    } else if (event === 'request_rejected') {
+      // Verlofverzoek afgewezen - update kaart of verwijder
+      const cardId = await findCardIdForRequest(reqData.id);
+      if (cardId) {
+        console.log('Update vPlan kaart status naar afgewezen:', cardId);
+        await axios.patch(`${VPLAN_BASE_URL}/cards/${cardId}`, {
+          title: `❌ ${title}`,
+          description: `${description} - AFGEWEZEN`,
+          start,
+          end,
+          assignedTo
+        }, {
+          headers: { 'Authorization': `Bearer ${VPLAN_API_TOKEN}`, 'Content-Type': 'application/json' }
+        });
+        console.log('vPlan kaart status bijgewerkt naar afgewezen');
+      } else {
+        console.log('Geen card ID gevonden voor request:', reqData.id);
+      }
     } else if (event === 'request_updated') {
       // update kaart: je moet eerst weten welke kaart hoort bij deze request
       // bijv. je slaat vPlan card-id op in jullie DB gekoppeld aan request.id van Rework
