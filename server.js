@@ -73,19 +73,39 @@ app.post('/webhook/rework', async (req, res) => {
     if (event === 'request_created') {
       // nieuwe kaart in vPlan
       console.log('Maak nieuwe vPlan kaart aan...');
-      const response = await axios.post(`${VPLAN_BASE_URL}/cards`, {
-        title,
-        description,
-        start,
-        end,
-        assignedTo
-      }, {
-        headers: {
-          'X-API-Key': VPLAN_API_TOKEN,
-          'Content-Type': 'application/json'
+      
+      // Test eerst wat de vPlan API endpoints zijn
+      try {
+        console.log('Test vPlan API endpoints...');
+        const testResponse = await axios.get(`${VPLAN_BASE_URL}`, {
+          headers: {
+            'X-API-Key': VPLAN_API_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        });
+        console.log('vPlan base endpoint response:', testResponse.data);
+      } catch (testError) {
+        console.log('vPlan base endpoint test failed:', testError.message);
+      }
+      
+      // Probeer verschillende endpoints
+      const possibleEndpoints = ['/cards', '/items', '/tasks', '/events', '/appointments'];
+      
+      for (const endpoint of possibleEndpoints) {
+        try {
+          console.log(`Testing GET ${VPLAN_BASE_URL}${endpoint}`);
+          const response = await axios.get(`${VPLAN_BASE_URL}${endpoint}`, {
+            headers: {
+              'X-API-Key': VPLAN_API_TOKEN,
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log(`✅ ${endpoint} works:`, response.status);
+          console.log(`${endpoint} data sample:`, JSON.stringify(response.data).substring(0, 200));
+        } catch (error) {
+          console.log(`❌ ${endpoint} failed:`, error.response?.status, error.message);
         }
-      });
-      console.log('vPlan kaart aangemaakt:', response.data);
+      }
     } else if (event === 'request_updated') {
       // Request werd gewijzigd - check status voor goedkeuring/afwijzing
       const status = reqData.status; // "ok", "pending", "rejected", etc.
