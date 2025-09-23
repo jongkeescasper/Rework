@@ -130,8 +130,8 @@ app.post('/webhook/rework', async (req, res) => {
         console.log('📋 Collection ID:', response.data.id);
         console.log('📋 Collection data:', response.data);
         
-        // Optioneel: collection naar een board verplaatsen om cards te genereren
-        // Dit kan later worden toegevoegd als je weet welk board te gebruiken
+        // Nu proberen om de collection naar een board te verplaatsen en aan juiste persoon toe te wijzen
+        await planCollectionToBoard(response.data.id, reqData.user.name, start, end);
         
       } catch (error) {
         console.log('❌ vPlan Collection creation failed:');
@@ -232,6 +232,89 @@ app.post('/webhook/rework', async (req, res) => {
     });
   }
 });
+
+// Functie om een collection automatisch naar een board te verplaatsen en toe te wijzen
+async function planCollectionToBoard(collectionId, userName, startDate, endDate) {
+  try {
+    console.log(`🎯 Probeer collection ${collectionId} te plannen voor ${userName} van ${startDate} tot ${endDate}`);
+    
+    // Stap 1: Haal alle beschikbare boards op
+    console.log('📋 Haal beschikbare boards op...');
+    const boardsResponse = await axios.get(`${VPLAN_BASE_URL}/board`, {
+      headers: {
+        'x-api-key': VPLAN_API_TOKEN,
+        'x-api-env': VPLAN_ENV_ID,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const boards = boardsResponse.data?.data || [];
+    console.log(`✅ Gevonden ${boards.length} boards:`, boards.map(b => ({ id: b.id, name: b.name })));
+    
+    // Stap 2: Haal alle beschikbare resources op
+    console.log('👥 Haal beschikbare resources op...');
+    const resourcesResponse = await axios.get(`${VPLAN_BASE_URL}/resource`, {
+      headers: {
+        'x-api-key': VPLAN_API_TOKEN,
+        'x-api-env': VPLAN_ENV_ID,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const resources = resourcesResponse.data?.data || [];
+    console.log(`✅ Gevonden ${resources.length} resources:`, resources.map(r => ({ id: r.id, name: r.name })));
+    
+    // Stap 3: Zoek de juiste resource op basis van naam
+    const matchingResource = resources.find(resource => {
+      const resourceName = resource.name?.toLowerCase() || '';
+      const searchName = userName.toLowerCase();
+      return resourceName.includes(searchName) || searchName.includes(resourceName);
+    });
+    
+    if (matchingResource) {
+      console.log(`✅ Resource gevonden: ${matchingResource.name} (${matchingResource.id})`);
+    } else {
+      console.log(`❌ Geen resource gevonden voor "${userName}". Beschikbare resources:`, resources.map(r => r.name));
+      console.log('💡 Collection blijft in backlog staan');
+      return;
+    }
+    
+    // Stap 4: Selecteer het eerste/hoofdboard (of later op basis van configuratie)
+    if (boards.length === 0) {
+      console.log('❌ Geen boards gevonden. Collection blijft in backlog');
+      return;
+    }
+    
+    const targetBoard = boards[0]; // Voor nu het eerste board gebruiken
+    console.log(`🎯 Gebruik board: ${targetBoard.name} (${targetBoard.id})`);
+    
+    // Stap 5: Verplaats collection naar board met resource en datum
+    console.log('📅 Verplaats collection naar board...');
+    const moveResponse = await axios.post(`${VPLAN_BASE_URL}/collection/${collectionId}/board/${targetBoard.id}`, {
+      start: startDate,
+      resources: [matchingResource.id]
+    }, {
+      headers: {
+        'x-api-key': VPLAN_API_TOKEN,
+        'x-api-env': VPLAN_ENV_ID,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log('✅ Collection succesvol gepland!');
+    console.log(`📋 Status: ${moveResponse.data.status}`);
+    console.log(`👤 Toegewezen aan: ${matchingResource.name}`);
+    console.log(`📅 Start datum: ${startDate}`);
+    console.log('🎉 Collection wordt automatisch omgezet naar cards op het board');
+    
+  } catch (error) {
+    console.log('❌ Automatische planning gefaald:', error.response?.status, error.response?.statusText);
+    console.log('Error details:', error.response?.data);
+    console.log('💡 Collection blijft in backlog staan en kan handmatig gepland worden');
+    
+    // Dit is niet kritiek - de collection is wel aangemaakt, alleen niet automatisch gepland
+  }
+}
 
 function findCardIdForRequest(reworkRequestId) {
   // hier moet je eigen logica/dataopslag maken: 
