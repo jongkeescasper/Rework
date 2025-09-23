@@ -292,8 +292,14 @@ async function planCollectionToBoard(collectionId, userName, startDate, endDate)
     console.log('📅 Verplaats collection naar board...');
     const moveResponse = await axios.post(`${VPLAN_BASE_URL}/collection/${collectionId}/board/${targetBoard.id}`, {
       start: startDate,
+      end: endDate,
       resources: [matchingResource.id],
-      end: endDate  // Voeg eind datum toe
+      // Probeer alternatieve velden voor resource assignment
+      resource_ids: [matchingResource.id],
+      assigned_resources: [matchingResource.id],
+      // Extra configuratie voor card generation
+      generate_cards: true,
+      assign_to_resources: true
     }, {
       headers: {
         'x-api-key': VPLAN_API_TOKEN,
@@ -308,6 +314,63 @@ async function planCollectionToBoard(collectionId, userName, startDate, endDate)
     console.log(`📅 Start datum: ${startDate}`);
     console.log(`📅 Eind datum: ${endDate}`);
     console.log('🎉 Collection wordt automatisch omgezet naar cards op het board');
+    
+    // Extra stap: Probeer ook direct cards aan te maken/bij te werken
+    console.log('🔧 Probeer ook directe card assignment...');
+    try {
+      // Check of er al cards zijn en update ze
+      const collectionCardsResponse = await axios.get(`${VPLAN_BASE_URL}/card?collection_id=${collectionId}`, {
+        headers: {
+          'x-api-key': VPLAN_API_TOKEN,
+          'x-api-env': VPLAN_ENV_ID,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      const existingCards = collectionCardsResponse.data?.data || [];
+      console.log(`🃏 Gevonden ${existingCards.length} bestaande cards voor collection`);
+      
+      if (existingCards.length === 0) {
+        // Maak nieuwe card aan als er geen bestaan
+        console.log('🆕 Maak nieuwe card aan...');
+        const newCardResponse = await axios.post(`${VPLAN_BASE_URL}/card`, {
+          collection_id: collectionId,
+          board_id: targetBoard.id,
+          name: `Vrij - ${userName}`,
+          description: `Van ${startDate} t/m ${endDate} - Verlofverzoek`,
+          start_date: startDate,
+          end_date: endDate,
+          resource_ids: [matchingResource.id]
+        }, {
+          headers: {
+            'x-api-key': VPLAN_API_TOKEN,
+            'x-api-env': VPLAN_ENV_ID,
+            'Content-Type': 'application/json'
+          }
+        });
+        console.log('✅ Nieuwe card aangemaakt!', newCardResponse.data.id);
+      } else {
+        // Update bestaande cards
+        for (const card of existingCards) {
+          console.log(`🔄 Update card ${card.id} met resource assignment...`);
+          await axios.put(`${VPLAN_BASE_URL}/card/${card.id}`, {
+            resource_ids: [matchingResource.id],
+            start_date: startDate,
+            end_date: endDate
+          }, {
+            headers: {
+              'x-api-key': VPLAN_API_TOKEN,
+              'x-api-env': VPLAN_ENV_ID,
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log(`✅ Card ${card.id} bijgewerkt`);
+        }
+      }
+    } catch (cardError) {
+      console.log('⚠️  Directe card assignment gefaald:', cardError.response?.status, cardError.response?.statusText);
+      console.log('Card error details:', cardError.response?.data);
+    }
     
     // Debug: Check of er cards zijn aangemaakt
     console.log('🔍 Wacht 3 seconden en check of cards zijn aangemaakt...');
