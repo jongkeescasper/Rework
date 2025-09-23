@@ -14,8 +14,8 @@ Deze webhook server luistert naar events van Rework en voert automatisch acties 
 
 1. Clone deze repository:
    ```bash
-   git clone <repository-url>
-   cd rework-webhook-test
+   git clone https://github.com/jongkeescasper/Rework.git
+   cd Rework
    ```
 
 2. Installeer dependencies:
