@@ -8,6 +8,26 @@ app.use(bodyParser.json());
 const VPLAN_API_TOKEN = 'jouw-vplan-api-token';
 const VPLAN_BASE_URL = 'https://api.vplan.com/v1';
 
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Server is running!', 
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      webhook: '/webhook/rework (POST only)'
+    }
+  });
+});
+
+// Test endpoint to verify webhook URL works
+app.get('/webhook/rework', (req, res) => {
+  res.json({ 
+    message: 'Webhook endpoint is active! Use POST method for actual webhooks.',
+    method: 'GET not supported for webhooks',
+    expected: 'POST request with JSON payload'
+  });
+});
+
 app.post('/webhook/rework', async (req, res) => {
   try {
     const payload = req.body;
