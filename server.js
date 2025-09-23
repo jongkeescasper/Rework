@@ -5,11 +5,9 @@ const axios = require('axios');
 const app = express();
 app.use(bodyParser.json());
 
-const VPLAN_API_TOKEN = process.env.VPLAN_API_TOKEN || 'jouw-vplan-api-token';
-const VPLAN_BASE_URL = 'https://api.vplan.com/v1';
-
-// Check of vPlan is geconfigureerd
-const isVPlanConfigured = VPLAN_API_TOKEN !== 'jouw-vplan-api-token';
+const VPLAN_API_TOKEN = process.env.VPLAN_API_TOKEN || '6esaJiXSXzYsbP3bu9syuyU34pwyJtVlFnxoqF45HsrxHMozxEiXpMn6AcMmpWNb';
+const VPLAN_ENV_ID = process.env.VPLAN_ENV_ID || 'a27baf4e67847b0ac7b48bc3ed099a5203e535a5';
+const VPLAN_BASE_URL = `https://api.vplan.com/v1/environments/${VPLAN_ENV_ID}`;
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -72,17 +70,6 @@ app.post('/webhook/rework', async (req, res) => {
     console.log('Verwerk event:', event);
     console.log('vPlan data:', { title, description, start, end, assignedTo });
 
-    if (!isVPlanConfigured) {
-      console.log('⚠️  vPlan niet geconfigureerd - webhook ontvangen maar geen actie ondernomen');
-      console.log('💡 Configureer VPLAN_API_TOKEN environment variabele om vPlan integratie te activeren');
-      return res.status(200).json({ 
-        message: 'Webhook ontvangen - vPlan integratie niet actief',
-        event: event,
-        data: { title, description, start, end, assignedTo },
-        note: 'Configureer VPLAN_API_TOKEN om vPlan integratie te activeren'
-      });
-    }
-
     if (event === 'request_created') {
       // nieuwe kaart in vPlan
       console.log('Maak nieuwe vPlan kaart aan...');
@@ -94,7 +81,7 @@ app.post('/webhook/rework', async (req, res) => {
         assignedTo
       }, {
         headers: {
-          'Authorization': `Bearer ${VPLAN_API_TOKEN}`,
+          'X-API-Key': VPLAN_API_TOKEN,
           'Content-Type': 'application/json'
         }
       });
@@ -120,6 +107,10 @@ app.post('/webhook/rework', async (req, res) => {
           updatedTitle = `❌ ${title}`;
           updatedDescription = `${description} - AFGEWEZEN`;
           console.log('Status gewijzigd naar afgewezen');
+        } else if (status === 'canceled') {
+          updatedTitle = `🚫 ${title}`;
+          updatedDescription = `${description} - GEANNULEERD`;
+          console.log('Status gewijzigd naar geannuleerd');
         } else if (status === 'pending') {
           updatedTitle = `⏳ ${title}`;
           updatedDescription = `${description} - IN BEHANDELING`;
@@ -134,7 +125,7 @@ app.post('/webhook/rework', async (req, res) => {
           end,
           assignedTo
         }, {
-          headers: { 'Authorization': `Bearer ${VPLAN_API_TOKEN}`, 'Content-Type': 'application/json' }
+          headers: { 'X-API-Key': VPLAN_API_TOKEN, 'Content-Type': 'application/json' }
         });
         console.log('vPlan kaart bijgewerkt');
       } else {
@@ -146,7 +137,7 @@ app.post('/webhook/rework', async (req, res) => {
         console.log('Verwijder vPlan kaart:', cardId);
         // Bijvoorbeeld verwijderen of markeren als "geannuleerd"
         await axios.delete(`${VPLAN_BASE_URL}/cards/${cardId}`, {
-          headers: { 'Authorization': `Bearer ${VPLAN_API_TOKEN}` }
+          headers: { 'X-API-Key': VPLAN_API_TOKEN }
         });
         console.log('vPlan kaart verwijderd');
       } else {
