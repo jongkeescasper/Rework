@@ -7,12 +7,17 @@ app.use(express.json());
 
 // vPlan API configuratie
 const VPLAN_BASE_URL = 'https://api.vplan.com/v1';
-const VPLAN_API_TOKEN = process.env.VPLAN_API_TOKEN;
-const VPLAN_ENV_ID = process.env.VPLAN_ENV_ID;
+const VPLAN_API_TOKEN = process.env.VPLAN_API_TOKEN || process.env.VPLAN_API_KEY;
+const VPLAN_ENV_ID = process.env.VPLAN_ENV_ID || process.env.VPLAN_API_ENV;
 
 console.log('vPlan configuratie:');
 console.log('- API Token:', VPLAN_API_TOKEN ? 'Aanwezig' : 'NIET INGESTELD');
 console.log('- Environment ID:', VPLAN_ENV_ID ? 'Aanwezig' : 'NIET INGESTELD');
+console.log('🔍 Debug - Environment variables:');
+console.log('  - VPLAN_API_TOKEN:', process.env.VPLAN_API_TOKEN ? 'SET' : 'NOT SET');
+console.log('  - VPLAN_API_KEY:', process.env.VPLAN_API_KEY ? 'SET' : 'NOT SET');
+console.log('  - VPLAN_ENV_ID:', process.env.VPLAN_ENV_ID ? 'SET' : 'NOT SET');
+console.log('  - VPLAN_API_ENV:', process.env.VPLAN_API_ENV ? 'SET' : 'NOT SET');
 
 // Health check endpoint
 app.get('/', (req, res) => {
