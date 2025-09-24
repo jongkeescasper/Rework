@@ -10,14 +10,23 @@ const VPLAN_BASE_URL = 'https://api.vplan.com/v1';
 const VPLAN_API_TOKEN = process.env.VPLAN_API_TOKEN || process.env.VPLAN_API_KEY;
 const VPLAN_ENV_ID = process.env.VPLAN_ENV_ID || process.env.VPLAN_API_ENV;
 
+// Rework API configuratie
+const REWORK_API_TOKEN = process.env.REWORK_API_TOKEN;
+const REWORK_COMPANY_ID = process.env.REWORK_COMPANY_ID;
+
 console.log('vPlan configuratie:');
 console.log('- API Token:', VPLAN_API_TOKEN ? 'Aanwezig' : 'NIET INGESTELD');
 console.log('- Environment ID:', VPLAN_ENV_ID ? 'Aanwezig' : 'NIET INGESTELD');
+console.log('Rework configuratie:');
+console.log('- API Token:', REWORK_API_TOKEN ? 'Aanwezig' : 'NIET INGESTELD');
+console.log('- Company ID:', REWORK_COMPANY_ID ? REWORK_COMPANY_ID : 'NIET INGESTELD');
 console.log('🔍 Debug - Environment variables:');
 console.log('  - VPLAN_API_TOKEN:', process.env.VPLAN_API_TOKEN ? 'SET' : 'NOT SET');
 console.log('  - VPLAN_API_KEY:', process.env.VPLAN_API_KEY ? 'SET' : 'NOT SET');
 console.log('  - VPLAN_ENV_ID:', process.env.VPLAN_ENV_ID ? 'SET' : 'NOT SET');
 console.log('  - VPLAN_API_ENV:', process.env.VPLAN_API_ENV ? 'SET' : 'NOT SET');
+console.log('  - REWORK_API_TOKEN:', process.env.REWORK_API_TOKEN ? 'SET' : 'NOT SET');
+console.log('  - REWORK_COMPANY_ID:', process.env.REWORK_COMPANY_ID ? 'SET' : 'NOT SET');
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -26,6 +35,174 @@ app.get('/', (req, res) => {
     status: 'active',
     timestamp: new Date().toISOString()
   });
+});
+
+// Auto-fetch endpoint om goedgekeurde verlofaanvragen op te halen uit Rework API
+app.get('/import/auto-fetch', async (req, res) => {
+  try {
+    console.log('🔍 Automatisch ophalen goedgekeurde verlofaanvragen uit Rework...');
+    
+    // Check Rework API credentials
+    if (!REWORK_API_TOKEN || !REWORK_COMPANY_ID) {
+      return res.status(500).json({
+        error: 'Rework API niet geconfigureerd',
+        message: 'REWORK_API_TOKEN en REWORK_COMPANY_ID environment variables zijn vereist',
+        missing: {
+          token: !REWORK_API_TOKEN,
+          company_id: !REWORK_COMPANY_ID
+        }
+      });
+    }
+    
+    // Query parameters voor filtering
+    const fromDate = req.query.from_date; // bijv: 2025-01-01
+    const toDate = req.query.to_date;     // bijv: 2025-12-31  
+    const userId = req.query.user_id;     // specifieke gebruiker
+    const perPage = Math.min(parseInt(req.query.per_page) || 50, 100); // max 100
+    const page = parseInt(req.query.page) || 1;
+    
+    // Bouw Rework API URL
+    const reworkUrl = `https://api.rework.nl/v2/${REWORK_COMPANY_ID}/leave/requests`;
+    const params = new URLSearchParams({
+      status: 'ok', // Alleen goedgekeurde requests
+      per_page: perPage.toString(),
+      page: page.toString()
+    });
+    
+    if (fromDate) params.append('from_date', fromDate);
+    if (toDate) params.append('to_date', toDate);
+    if (userId) params.append('user_id', userId);
+    
+    const fullUrl = `${reworkUrl}?${params.toString()}`;
+    console.log(`📡 Rework API URL: ${fullUrl}`);
+    
+    // Haal data op uit Rework
+    const reworkResponse = await axios.get(fullUrl, {
+      headers: {
+        'Authorization': `Bearer ${REWORK_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const requests = reworkResponse.data || [];
+    console.log(`📋 Gevonden ${requests.length} goedgekeurde verlofaanvragen in Rework`);
+    
+    if (requests.length === 0) {
+      return res.json({
+        message: 'Geen goedgekeurde verlofaanvragen gevonden',
+        filters: {
+          from_date: fromDate,
+          to_date: toDate,
+          user_id: userId,
+          page: page,
+          per_page: perPage
+        },
+        total: 0,
+        results: []
+      });
+    }
+    
+    // Process elke request
+    const results = [];
+    
+    for (const request of requests) {
+      try {
+        console.log(`📋 Verwerk request ${request.id}: ${request.user?.name}`);
+        
+        // Check of al geïmporteerd
+        const userName = request.user?.name || 'Onbekende gebruiker';
+        const requestType = request.request_type?.name || 'Verlofverzoek';
+        
+        const alreadyImported = await checkIfAlreadyImported(request.id, userName);
+        if (alreadyImported) {
+          console.log(`⏭️ Skip request ${request.id} - al eerder geïmporteerd`);
+          results.push({ 
+            id: request.id, 
+            success: false, 
+            reason: 'Al eerder geïmporteerd',
+            user: userName,
+            type: requestType
+          });
+          continue;
+        }
+        
+        // Importeer via bestaande Schedule Deviation logica
+        await createScheduleDeviation(request, userName, requestType);
+        
+        results.push({ 
+          id: request.id, 
+          success: true, 
+          user: userName,
+          type: requestType,
+          days: request.slots?.length || 0,
+          dates: request.slots?.map(s => s.date.split('T')[0]) || []
+        });
+        
+        console.log(`✅ Request ${request.id} succesvol geïmporteerd voor ${userName}`);
+        
+      } catch (importError) {
+        console.error(`❌ Fout bij importeren request ${request.id}:`, importError.message);
+        results.push({ 
+          id: request.id, 
+          success: false, 
+          reason: importError.message,
+          user: request.user?.name || 'Onbekend'
+        });
+      }
+    }
+    
+    // Samenvatting
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+    const skipped = results.filter(r => !r.success && r.reason === 'Al eerder geïmporteerd').length;
+    
+    console.log(`📊 Auto-fetch voltooid: ${successful} nieuw geïmporteerd, ${skipped} al aanwezig, ${failed - skipped} gefaald`);
+    
+    res.json({
+      message: 'Auto-fetch voltooid',
+      summary: {
+        total_found: requests.length,
+        imported: successful,
+        skipped: skipped,
+        failed: failed - skipped
+      },
+      filters_used: {
+        from_date: fromDate,
+        to_date: toDate,
+        user_id: userId,
+        page: page,
+        per_page: perPage
+      },
+      results: results,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Fout bij auto-fetch:', error);
+    
+    // Specifieke Rework API fouten
+    if (error.response?.status === 401) {
+      return res.status(401).json({ 
+        error: 'Rework API authenticatie gefaald', 
+        message: 'Check je REWORK_API_TOKEN',
+        status: error.response.status
+      });
+    }
+    
+    if (error.response?.status === 404) {
+      return res.status(404).json({ 
+        error: 'Rework company niet gevonden', 
+        message: 'Check je REWORK_COMPANY_ID',
+        status: error.response.status
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Auto-fetch gefaald', 
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Import endpoint voor bestaande goedgekeurde verlofaanvragen
