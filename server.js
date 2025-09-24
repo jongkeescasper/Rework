@@ -37,91 +37,34 @@ app.post('/webhook/rework', async (req, res) => {
     console.log('Data:', JSON.stringify(reqData, null, 2));
 
     if (event === 'request_created') {
-      // Maak een afwezigheid (Schedule Deviation) in vPlan aan
-      console.log('� Maak vPlan afwezigheid aan...');
+      // Bij aanmaken alleen loggen, pas bij goedkeuring actie ondernemen
+      console.log('📝 Verlofaanvraag aangemaakt, wacht op goedkeuring...');
+      console.log(`👤 ${reqData.user?.name}: ${reqData.request_type?.name}`);
+      console.log(`📅 ${reqData.first_date?.split('T')[0]} tot ${reqData.last_date?.split('T')[0]}`);
+      console.log('⏳ Geen actie ondernomen - wacht op goedkeuring');
       
-      const userName = reqData.user?.name || 'Onbekende gebruiker';
-      const startDate = reqData.first_date;
-      const endDate = reqData.last_date;
-      const requestType = reqData.request_type?.name || 'Verlofverzoek';
+    } else if (event === 'request_updated') {
+      // Check of de status is gewijzigd naar 'ok' (goedgekeurd)
+      const statusChanged = reqData.changes?.status;
+      const currentStatus = reqData.status;
       
-      // Vind de juiste resource (gebruiker)
-      const matchingResource = await findResourceByName(userName);
+      console.log('� Verlofaanvraag bijgewerkt');
+      console.log(`� Status: ${currentStatus}`);
       
-      if (matchingResource) {
-        console.log(`✅ Resource gevonden: ${matchingResource.name} (${matchingResource.id})`);
+      if (statusChanged) {
+        console.log(`📊 Status gewijzigd: ${statusChanged[0]} → ${statusChanged[1]}`);
+      }
+      
+      if (currentStatus === 'ok' && statusChanged && statusChanged[1] === 'ok') {
+        // Status is gewijzigd naar goedgekeurd - maak vPlan afwezigheid aan
+        console.log('✅ Verlofaanvraag goedgekeurd - maak vPlan afwezigheid aan...');
         
-        // Gebruik slots data voor precieze dagen en uren
-        const slots = reqData.slots || [];
-        const deviations = [];
+        const userName = reqData.user?.name || 'Onbekende gebruiker';
+        const requestType = reqData.request_type?.name || 'Verlofverzoek';
         
-        console.log(`📅 Maak afwezigheid aan voor ${slots.length} slot(s)...`);
-        
-        // Loop door elke slot (dag) uit Rework
-        for (const slot of slots) {
-          // Parse datum direct uit ISO string om tijdzone problemen te voorkomen
-          const dayString = slot.date.split('T')[0]; // Krijg YYYY-MM-DD direct uit ISO string
-          const hours = parseFloat(slot.hours) || 8; // Gebruik exacte uren uit slot
-          
-          try {
-            console.log(`📅 Verwerk dag: ${dayString} (${hours} uur)`);
-            console.log(`🔍 Debug - Slot data:`, {
-              original_date: slot.date,
-              parsed_day: dayString,
-              hours: hours,
-              all_day: slot.all_day
-            });
-            
-            const payload = {
-              description: `${requestType} - ${userName}`,
-              type: 'leave', // of 'vacation', 'sick', 'other'
-              start_date: dayString,
-              end_date: dayString, // Zelfde dag voor start en eind
-              time: Math.round(hours * 60), // Vermenigvuldig met 60 voor minuten
-              external_ref: `rework_${reqData.id}_${dayString}`
-            };
-            
-            console.log(`📤 Verstuur naar vPlan:`, payload);
-            
-            const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, payload, {
-              headers: {
-                'x-api-key': VPLAN_API_TOKEN,
-                'x-api-env': VPLAN_ENV_ID,
-                'Content-Type': 'application/json'
-              }
-            });
-            
-            deviations.push({ date: dayString, hours: hours, minutes: Math.round(hours * 60), success: true });
-            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt (${hours} uur = ${Math.round(hours * 60)} minuten)`);
-            
-          } catch (dayError) {
-            console.error(`❌ Fout voor dag ${dayString}:`, dayError.response?.data || dayError.message);
-            console.error(`🔍 Debug - API Error Details:`, {
-              status: dayError.response?.status,
-              statusText: dayError.response?.statusText,
-              headers: dayError.response?.headers,
-              config_url: dayError.config?.url,
-              config_data: dayError.config?.data
-            });
-            deviations.push({ date: dayString, hours: hours, minutes: Math.round(hours * 60), success: false, error: dayError.message });
-          }
-        }
-        
-        // Samenvatting
-        const successfulDays = deviations.filter(d => d.success).length;
-        const totalDays = deviations.length;
-        const totalHours = deviations.filter(d => d.success).reduce((sum, d) => sum + d.hours, 0);
-        const totalMinutes = deviations.filter(d => d.success).reduce((sum, d) => sum + d.minutes, 0);
-        
-        console.log(`✅ vPlan afwezigheid aangemaakt voor ${successfulDays}/${totalDays} dagen!`);
-        console.log(`📅 Totaal: ${totalHours} uur (${totalMinutes} minuten) afwezigheid`);
-        console.log(`👤 Voor: ${matchingResource.name}`);
-        console.log(`🏷️  Type: ${requestType}`);
-        console.log('🎉 Volledige afwezigheid staat nu in Marcel\'s planning!');
-        
+        await createScheduleDeviation(reqData, userName, requestType);
       } else {
-        console.log(`❌ Geen resource gevonden voor "${userName}"`);
-        console.log('💡 Afwezigheid kan niet automatisch worden ingepland');
+        console.log('ℹ️ Geen actie ondernomen - nog niet goedgekeurd of andere wijziging');
       }
       
     } else if (event === 'request_destroyed') {
@@ -245,6 +188,92 @@ async function findResourceByName(userName) {
   } catch (error) {
     console.error('❌ Fout bij zoeken resource:', error.response?.data || error.message);
     return null;
+  }
+}
+
+// Functie om Schedule Deviation (afwezigheid) aan te maken in vPlan
+async function createScheduleDeviation(reqData, userName, requestType) {
+  try {
+    // Vind de juiste resource (gebruiker)
+    const matchingResource = await findResourceByName(userName);
+    
+    if (matchingResource) {
+      console.log(`✅ Resource gevonden: ${matchingResource.name} (${matchingResource.id})`);
+      
+      // Gebruik slots data voor precieze dagen en uren
+      const slots = reqData.slots || [];
+      const deviations = [];
+      
+      console.log(`📅 Maak afwezigheid aan voor ${slots.length} slot(s)...`);
+      
+      // Loop door elke slot (dag) uit Rework
+      for (const slot of slots) {
+        // Parse datum direct uit ISO string om tijdzone problemen te voorkomen
+        const dayString = slot.date.split('T')[0]; // Krijg YYYY-MM-DD direct uit ISO string
+        const hours = parseFloat(slot.hours) || 8; // Gebruik exacte uren uit slot
+        
+        try {
+          console.log(`📅 Verwerk dag: ${dayString} (${hours} uur)`);
+          console.log(`🔍 Debug - Slot data:`, {
+            original_date: slot.date,
+            parsed_day: dayString,
+            hours: hours,
+            all_day: slot.all_day
+          });
+          
+          const payload = {
+            description: `${requestType} - ${userName}`,
+            type: 'leave', // of 'vacation', 'sick', 'other'
+            start_date: dayString,
+            end_date: dayString, // Zelfde dag voor start en eind
+            time: Math.round(hours * 60), // Vermenigvuldig met 60 voor minuten
+            external_ref: `rework_${reqData.id}_${dayString}`
+          };
+          
+          console.log(`📤 Verstuur naar vPlan:`, payload);
+          
+          const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, payload, {
+            headers: {
+              'x-api-key': VPLAN_API_TOKEN,
+              'x-api-env': VPLAN_ENV_ID,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          deviations.push({ date: dayString, hours: hours, minutes: Math.round(hours * 60), success: true });
+          console.log(`✅ Afwezigheid voor ${dayString} aangemaakt (${hours} uur = ${Math.round(hours * 60)} minuten)`);
+          
+        } catch (dayError) {
+          console.error(`❌ Fout voor dag ${dayString}:`, dayError.response?.data || dayError.message);
+          console.error(`🔍 Debug - API Error Details:`, {
+            status: dayError.response?.status,
+            statusText: dayError.response?.statusText,
+            headers: dayError.response?.headers,
+            config_url: dayError.config?.url,
+            config_data: dayError.config?.data
+          });
+          deviations.push({ date: dayString, hours: hours, minutes: Math.round(hours * 60), success: false, error: dayError.message });
+        }
+      }
+      
+      // Samenvatting
+      const successfulDays = deviations.filter(d => d.success).length;
+      const totalDays = deviations.length;
+      const totalHours = deviations.filter(d => d.success).reduce((sum, d) => sum + d.hours, 0);
+      const totalMinutes = deviations.filter(d => d.success).reduce((sum, d) => sum + d.minutes, 0);
+      
+      console.log(`✅ vPlan afwezigheid aangemaakt voor ${successfulDays}/${totalDays} dagen!`);
+      console.log(`📅 Totaal: ${totalHours} uur (${totalMinutes} minuten) afwezigheid`);
+      console.log(`👤 Voor: ${matchingResource.name}`);
+      console.log(`🏷️  Type: ${requestType}`);
+      console.log('🎉 Afwezigheid staat nu in de planning!');
+      
+    } else {
+      console.log(`❌ Geen resource gevonden voor "${userName}"`);
+      console.log('💡 Afwezigheid kan niet automatisch worden ingepland');
+    }
+  } catch (error) {
+    console.error('❌ Fout bij aanmaken Schedule Deviation:', error.message);
   }
 }
 
