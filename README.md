@@ -138,8 +138,9 @@ GET /import/schedules?from_date=2025-10-01&to_date=2025-12-31
 **Wat het doet:**
 - Haalt schedules op uit Rework per gebruiker
 - Analyseert `workhours` arrays: `[8,8,0,8,8,0,0]` → woensdag = 0 uur = roostervrij
-- Respecteert wisselende roosters (meerdere `workhours` patronen)
-- Maakt Schedule Deviations type `"roster_free"` voor dagen met 0 werkuren
+- Respecteert wisselende roosters (meerdere `workhours` patronen)  
+- Maakt Schedule Deviations type `"leave"` voor dagen met 0 werkuren (8u standaard)
+- Beschrijving: `"Roostervrij - [Gebruikersnaam]"`
 - Duplicate check: voorkomt overschrijven van bestaande afwezigheid
 
 ### 6. **Manual Import**
@@ -172,13 +173,29 @@ PORT=3000  # Server poort (Render zet dit automatisch)
 - **External Ref:** `rework_{request_id}_{date}` (voor duplicate checking)
 
 ### Resource Matching
-De server zoekt automatisch de juiste vPlan resource op naam:
+De server zoekt automatisch de juiste vPlan resource op naam met verbeterde matching:
 ```javascript
+// Verbeterde naammatching ondersteunt variaties zoals:
 // "Marcel Maasmann" in Rework → Marcel Maasmann resource in vPlan
+// "Remco Prinsen" in Rework → Remco Prins resource in vPlan
+
 const matchingResource = resources.find(resource => {
   const resourceName = resource.name?.toLowerCase() || '';
   const searchName = userName.toLowerCase();
-  return resourceName.includes(searchName) || searchName.includes(resourceName);
+  
+  // Exacte match
+  if (resourceName === searchName) return true;
+  
+  // Bevat match (beide kanten)  
+  if (resourceName.includes(searchName) || searchName.includes(resourceName)) return true;
+  
+  // Split-name matching voor naamvariaties
+  const resourceParts = resourceName.split(' ');
+  const searchParts = searchName.split(' ');
+  
+  return searchParts.every(part => 
+    resourceParts.some(rPart => rPart.includes(part) || part.includes(rPart))
+  );
 });
 ```
 
@@ -308,6 +325,8 @@ external_ref: `rework_${request_id}_${date}`
 | API Auth fout | `401 Unauthorized` | Check API tokens in environment variables |
 | Tijdzone probleem | Verkeerde datums | Server gebruikt directe string parsing `slot.date.split('T')[0]` |
 | Decimale uren | "8 minuten ipv 8 uur" | Server converteert: `hours * 60` voor vPlan API |
+| 422 Roster errors | `Request failed with status code 422` | Controleer of roostervrije dagen niet al bezet zijn |
+| Naamverschillen | "Remco Prinsen" vs "Remco Prins" | Server gebruikt verbeterde split-name matching |
 
 ## 🔄 Migration & Data Import
 
@@ -344,10 +363,12 @@ curl -X POST "https://rework-kiaa.onrender.com/import/approved-requests" \
 - [x] Webhook event handling 
 - [x] Schedule Deviation creation
 - [x] Multi-day period support
-- [x] Resource auto-matching
+- [x] Resource auto-matching with split-name logic
 - [x] Duplicate prevention
 - [x] Rework API integration
 - [x] Auto-fetch endpoint
+- [x] Company days import (holidays)
+- [x] Individual schedules import (roster-free days)
 - [x] Error handling & logging
 - [x] Production deployment
 
@@ -367,4 +388,4 @@ curl -X POST "https://rework-kiaa.onrender.com/import/approved-requests" \
 **Server Status:** https://rework-kiaa.onrender.com/
 
 **Last Updated:** September 24, 2025
-**Version:** 2.0.0 - Full Rework API Integration
+**Version:** 2.1.0 - Full Roster Integration + Enhanced Name Matching
