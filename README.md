@@ -1,84 +1,308 @@
-# Rework Webhook Integration
+# 🔗 Rework ↔ vPlan Integration
 
-Een Node.js server die webhooks van Rework ontvangt en deze integreert met vPlan voor automatische planning van verlofverzoeken.
+Een geavanceerde Node.js webhook server die **Rework verlofaanvragen** automatisch synchroniseert met **vPlan planning**. Wanneer verlof wordt goedgekeurd in Rework, verschijnt het direct als afwezigheid in de juiste persoon's vPlan planning.
 
-## Functionaliteit
+## 🎯 Wat doet deze integratie?
 
-Deze webhook server luistert naar events van Rework en voert automatisch acties uit in vPlan:
+Deze server luistert naar Rework webhook events en voert automatisch acties uit in vPlan:
 
-- **request_created**: Maakt een nieuwe kaart aan in vPlan voor het verlofverzoek
-- **request_updated**: Werkt een bestaande kaart bij in vPlan  
-- **request_destroyed**: Verwijdert de kaart uit vPlan
+### ✅ **Bij Goedkeuring (`request_updated` met status `"ok"`)**
+- Maakt **Schedule Deviations** (afwezigheden) aan in vPlan
+- Voor **elke dag** een aparte afwezigheid met juiste aantal uren
+- Koppelt automatisch aan de **juiste resource** (gebruiker)
+- Gebruikt **exacte uren** uit Rework slots (8.25 uur → 495 minuten)
 
-## Installatie
+### 🗑️ **Bij Verwijdering (`request_destroyed`)**  
+- Zoekt alle gerelateerde Schedule Deviations via `external_ref`
+- Verwijdert automatisch alle afwezigheden voor die aanvraag
+- Werkt met meerdaagse periodes
 
-1. Clone deze repository:
-   ```bash
-   git clone https://github.com/jongkeescasper/Rework.git
-   cd Rework
-   ```
+### 📝 **Bij Aanmaken (`request_created`)**
+- Logt de aanvraag voor transparantie
+- **Geen vPlan actie** - wacht op goedkeuring
 
-2. Installeer dependencies:
-   ```bash
-   npm install
-   ```
+## 🚀 Live Server
 
-3. Configureer je API tokens:
-   - Vervang `jouw-vplan-api-token` in `server.js` met je echte vPlan API token
-   - Configureer je Rework webhook URL naar: `https://rework-kiaa.onrender.com/webhook/rework`
+**Productie URL:** https://rework-kiaa.onrender.com
 
-4. Start de server:
-   ```bash
-   npm start
-   ```
-
-De server draait standaard op poort 3000, of de poort die gespecificeerd is in de `PORT` environment variabele.
-
-## API Endpoints
-
-- `POST /webhook/rework` - Ontvangt webhook events van Rework
-
-## Dependencies
-
-- **express**: Web framework voor Node.js
-- **body-parser**: Middleware voor het parsen van JSON requests
-- **axios**: HTTP client voor API calls naar vPlan
-
-## Configuratie
-
-Zorg ervoor dat je de volgende instellingen configureert:
-
-1. **vPlan API Token**: Vervang de placeholder in `server.js`
-2. **Webhook URL**: Configureer in Rework de webhook URL naar: `https://rework-kiaa.onrender.com/webhook/rework`
-3. **User Mapping**: Implementeer de `findCardIdForRequest` functie voor het koppelen van Rework requests aan vPlan kaarten
-
-## Ontwikkeling
-
-Voor development kun je de server starten met:
-
-```bash
-node server.js
+**Health Check:** https://rework-kiaa.onrender.com/
+```json
+{
+  "message": "Rework vPlan Webhook Integration", 
+  "status": "active",
+  "timestamp": "2025-09-24T10:55:00Z"
+}
 ```
 
-Voor productie gebruik je waarschijnlijk een process manager zoals PM2 of deploy je naar een cloud platform.
+## 📋 API Endpoints
 
-## Deployment
+### 1. **Webhook Endpoint** 
+```
+POST /webhook/rework
+```
+- **Doel:** Ontvangt Rework webhook events
+- **Configureer in Rework:** `https://rework-kiaa.onrender.com/webhook/rework`
+- **Events:** `request_created`, `request_updated`, `request_destroyed`
 
-Deze applicatie is momenteel gedeployed op Render en beschikbaar op:
-**https://rework-kiaa.onrender.com**
+### 2. **Handmatige Import**
+```
+POST /import/approved-requests
+```
+- **Doel:** Import via JSON body met array van requests
+- **Gebruik:** Voor eenmalige bulk import
+- **Validatie:** Checkt duplicaten via `external_ref`
 
-### Webhook URL voor Rework configuratie:
-`https://rework-kiaa.onrender.com/webhook/rework`
+### 3. **Automatisch Ophalen** ⭐
+```
+GET /import/auto-fetch[?parameters]
+```
+**Haalt goedgekeurde verlofaanvragen op uit Rework API en importeert ze direct naar vPlan.**
 
-### Deploy naar Render:
-1. Verbind je GitHub repository met Render
-2. Zorg ervoor dat de `PORT` environment variabele wordt gebruikt (automatisch door Render)
-3. Configureer eventuele andere environment variabelen (zoals API tokens)
+#### Query Parameters:
+| Parameter | Voorbeeld | Beschrijving |
+|-----------|-----------|--------------|
+| `from_date` | `2025-01-01` | Start datum (YYYY-MM-DD) |
+| `to_date` | `2025-12-31` | Eind datum (YYYY-MM-DD) |  
+| `user_id` | `66820` | Specifieke Rework gebruiker ID |
+| `per_page` | `50` | Aantal requests per pagina (max 100) |
+| `page` | `2` | Pagina nummer |
 
-## TODO
+#### Voorbeelden:
+```bash
+# Alle toekomstige goedgekeurde verlof
+GET /import/auto-fetch?from_date=2025-10-01&to_date=2025-12-31
 
-- [ ] Implementeer database voor request/card mapping
-- [ ] Voeg logging toe
-- [ ] Voeg error handling toe voor API failures
-- [ ] Voeg authenticatie toe voor webhook security
-- [ ] Voeg tests toe
+# Historisch verlof van dit jaar  
+GET /import/auto-fetch?from_date=2025-01-01&to_date=2025-09-01
+
+# Alleen Marcel's verlof
+GET /import/auto-fetch?user_id=66820
+
+# Test met kleine batch
+GET /import/auto-fetch?per_page=10&from_date=2025-09-01
+```
+
+## ⚙️ Environment Variables
+
+### vPlan API
+```bash
+VPLAN_API_TOKEN=your-vplan-api-token    # of VPLAN_API_KEY
+VPLAN_ENV_ID=your-vplan-environment-id  # of VPLAN_API_ENV
+```
+
+### Rework API  
+```bash
+REWORK_API_TOKEN=GCHooHemP2FYZo2D4CyB
+REWORK_COMPANY_ID=2854
+```
+
+### Optioneel
+```bash
+PORT=3000  # Server poort (Render zet dit automatisch)
+```
+
+## 📊 Technische Details
+
+### vPlan Schedule Deviations
+- **Endpoint:** `POST /resource/{resource_id}/schedule_deviation/`
+- **Type:** `"leave"` (absence type)
+- **Time:** Uren × 60 (wordt omgezet naar minuten)
+- **External Ref:** `rework_{request_id}_{date}` (voor duplicate checking)
+
+### Resource Matching
+De server zoekt automatisch de juiste vPlan resource op naam:
+```javascript
+// "Marcel Maasmann" in Rework → Marcel Maasmann resource in vPlan
+const matchingResource = resources.find(resource => {
+  const resourceName = resource.name?.toLowerCase() || '';
+  const searchName = userName.toLowerCase();
+  return resourceName.includes(searchName) || searchName.includes(resourceName);
+});
+```
+
+### Datum & Tijd Parsing
+```javascript
+// Tijdzone-safe datum parsing
+const dayString = slot.date.split('T')[0]; // "2025-10-01T00:00:00+02:00" → "2025-10-01"
+
+// Uren naar minuten conversie  
+const minutes = Math.round(hours * 60); // 8.25 uur → 495 minuten
+```
+
+## 🔄 Workflow Example
+
+### Scenario: Marcel vraagt 2 dagen verlof aan
+
+1. **Rework: Aanvraag aanmaken**
+   ```
+   request_created → Server logt: "Verlofaanvraag aangemaakt, wacht op goedkeuring..."
+   ```
+
+2. **Rework: Manager keurt goed** 
+   ```
+   request_updated (status: "pending" → "ok")
+   └── Server haalt resource op: Marcel Maasmann (ID: 10fd315f...)
+   └── Voor elke dag:
+       ├── 2025-10-01: 8.25 uur → 495 minuten Schedule Deviation  
+       └── 2025-10-02: 7.0 uur → 420 minuten Schedule Deviation
+   ```
+
+3. **vPlan: Afwezigheid zichtbaar**
+   ```
+   Marcel's planning toont nu:
+   ├── 1 okt: 495 min afwezig (Dokter, tandarts, fysio etc.)
+   └── 2 okt: 420 min afwezig (Dokter, tandarts, fysio etc.)
+   ```
+
+4. **Rework: Aanvraag verwijderd**
+   ```  
+   request_destroyed
+   └── Server zoekt: external_ref bevat "rework_20865207774319" 
+   └── Verwijdert beide Schedule Deviations
+   └── vPlan: Afwezigheid verdwijnt uit planning
+   ```
+
+## 🔧 Installation & Setup
+
+### 1. Local Development
+```bash
+git clone https://github.com/jongkeescasper/Rework.git
+cd Rework
+npm install
+cp .env.example .env  # Configureer je API keys
+npm start  # Server draait op http://localhost:3000
+```
+
+### 2. Render Deployment (Productie)
+1. **GitHub → Render verbinding**
+2. **Environment Variables configureren:**
+   - `VPLAN_API_TOKEN`
+   - `VPLAN_ENV_ID` 
+   - `REWORK_API_TOKEN`
+   - `REWORK_COMPANY_ID`
+3. **Auto-deploy** bij elke git push naar `main`
+
+### 3. Rework Webhook Configuratie
+Ga naar Rework → Settings → Integrations → Webhooks:
+```
+URL: https://rework-kiaa.onrender.com/webhook/rework
+Events: ✅ request_created, ✅ request_updated, ✅ request_destroyed  
+```
+
+## 📈 Monitoring & Logs
+
+### Real-time Logs (Render)
+```bash
+# Render Dashboard → Service → Logs
+📥 Rework webhook ontvangen: request_updated
+✅ Resource gevonden: Marcel Maasmann (10fd315f-1c81-4d59-a3fc-0419c4ba02f5)
+📅 Verwerk dag: 2025-10-01 (8.25 uur)
+📤 Verstuur naar vPlan: {"time": 495, "type": "leave", ...}
+✅ Afwezigheid voor 2025-10-01 aangemaakt (8.25 uur = 495 minuten)
+```
+
+### Import Response Format
+```json
+{
+  "message": "Auto-fetch voltooid",
+  "summary": {
+    "total_found": 5,
+    "imported": 3, 
+    "skipped": 1,
+    "failed": 1
+  },
+  "results": [
+    {
+      "id": 20865207774319,
+      "success": true,
+      "user": "Marcel Maasmann", 
+      "type": "Vakantie",
+      "days": 2,
+      "dates": ["2025-10-01", "2025-10-02"]
+    }
+  ]
+}
+```
+
+## 🛡️ Error Handling & Recovery
+
+### Duplicate Prevention
+```javascript
+// Checks via external_ref pattern
+external_ref: `rework_${request_id}_${date}`
+// Bijvoorbeeld: "rework_20865207774319_2025-10-01"
+```
+
+### API Rate Limiting
+- **Rework:** 150 requests per 5 minuten
+- **vPlan:** Standaard rate limiting
+- **Strategy:** Respecteer `Retry-After` headers
+
+### Common Issues & Solutions
+
+| Issue | Symptom | Solution |
+|-------|---------|----------|
+| Resource niet gevonden | `❌ Geen resource gevonden voor "Marcel Maasmann"` | Check spelling naam, voeg resource toe in vPlan |
+| API Auth fout | `401 Unauthorized` | Check API tokens in environment variables |
+| Tijdzone probleem | Verkeerde datums | Server gebruikt directe string parsing `slot.date.split('T')[0]` |
+| Decimale uren | "8 minuten ipv 8 uur" | Server converteert: `hours * 60` voor vPlan API |
+
+## 🔄 Migration & Data Import
+
+### Historische Data Importeren
+```bash
+# Alles van 2025
+curl "https://rework-kiaa.onrender.com/import/auto-fetch?from_date=2025-01-01&to_date=2025-12-31"
+
+# Per kwartaal voor grote datasets  
+curl "https://rework-kiaa.onrender.com/import/auto-fetch?from_date=2025-01-01&to_date=2025-03-31&per_page=100"
+curl "https://rework-kiaa.onrender.com/import/auto-fetch?from_date=2025-04-01&to_date=2025-06-30&per_page=100"
+```
+
+### Bulk Import via JSON
+```bash
+curl -X POST "https://rework-kiaa.onrender.com/import/approved-requests" \
+  -H "Content-Type: application/json" \
+  -d '{"requests": [...]}'  # Array met Rework request objecten
+```
+
+## 🎯 Dependencies
+
+```json
+{
+  "express": "^4.18.2",
+  "axios": "^1.5.0", 
+  "dotenv": "^16.3.1"
+}
+```
+
+## 📝 Development Roadmap
+
+### ✅ Completed
+- [x] Webhook event handling 
+- [x] Schedule Deviation creation
+- [x] Multi-day period support
+- [x] Resource auto-matching
+- [x] Duplicate prevention
+- [x] Rework API integration
+- [x] Auto-fetch endpoint
+- [x] Error handling & logging
+- [x] Production deployment
+
+### 🔄 Future Enhancements  
+- [ ] Database voor persistent request mapping
+- [ ] Webhook authentication/security
+- [ ] User interface voor import management  
+- [ ] Scheduled imports (daily/weekly)
+- [ ] Multi-company support
+- [ ] Advanced filtering & reporting
+- [ ] Unit tests & integration tests
+
+## 📞 Support & Troubleshooting
+
+**Issues?** Check de [live logs in Render Dashboard](https://dashboard.render.com/) of maak een GitHub issue.
+
+**Server Status:** https://rework-kiaa.onrender.com/
+
+**Last Updated:** September 24, 2025
+**Version:** 2.0.0 - Full Rework API Integration
