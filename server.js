@@ -219,13 +219,29 @@ async function checkAsyncCardCreation(collectionId, targetBoard, matchingResourc
     
     if (collectionCards.length > 0) {
       console.log('✅ Cards succesvol aangemaakt door vPlan!');
-      collectionCards.forEach(card => {
-        console.log(`🃏 Card: ${card.name || card.title} (${card.id})`);
-        console.log(`📅 Start: ${card.start || card.start_date || 'geen datum'}`);
-        console.log(`📅 End: ${card.end || card.end_date || 'geen datum'}`);
-        console.log(`👥 Resources: ${card.resources?.map(r => r.name).join(', ') || 'none'}`);
-        console.log(`🏷️  Stage: ${card.stage?.name || 'geen stage'}`);
+      console.log(`🃏 Totaal aantal cards gevonden: ${collectionCards.length}`);
+      
+      // Filter op recente cards (vandaag of deze maand)
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const thisMonth = new Date().toISOString().substring(0, 7); // YYYY-MM
+      
+      const recentCards = collectionCards.filter(card => {
+        const cardStart = card.start || card.start_date || '';
+        return cardStart.startsWith(thisMonth) || cardStart >= startDate;
       });
+      
+      console.log(`🎯 Recente/relevante cards (${thisMonth} of later): ${recentCards.length}`);
+      
+      if (recentCards.length > 0) {
+        recentCards.forEach(card => {
+          console.log(`🃏 Card: ${card.name || card.title} (${card.id})`);
+          console.log(`📅 Start: ${card.start || card.start_date || 'geen datum'}`);
+          console.log(`📅 End: ${card.end || card.end_date || 'geen datum'}`);
+          console.log(`👥 Resources: ${card.resources?.map(r => r.name).join(', ') || 'none'}`);
+          console.log(`🏷️  Stage: ${card.stage?.name || 'geen stage'}`);
+          console.log('---');
+        });
+      }
       
       // Check specifiek Marcel's planning
       const marcelCards = collectionCards.filter(card => 
@@ -233,7 +249,20 @@ async function checkAsyncCardCreation(collectionId, targetBoard, matchingResourc
       );
       
       if (marcelCards.length > 0) {
-        console.log(`🎯 ${matchingResource.name} heeft ${marcelCards.length} nieuwe card(s) in zijn planning!`);
+        console.log(`🎯 ${matchingResource.name} heeft ${marcelCards.length} card(s) in zijn planning!`);
+        
+        // Toon Marcel's cards voor deze periode
+        const marcelRecentCards = marcelCards.filter(card => {
+          const cardStart = card.start || card.start_date || '';
+          return cardStart >= startDate && cardStart <= endDate;
+        });
+        
+        if (marcelRecentCards.length > 0) {
+          console.log(`✅ Marcel's nieuwe verlof cards (${startDate} - ${endDate}):`);
+          marcelRecentCards.forEach(card => {
+            console.log(`   🏖️  ${card.name || card.title}: ${card.start || card.start_date} tot ${card.end || card.end_date}`);
+          });
+        }
       }
     } else {
       console.log('⚠️  Nog geen cards zichtbaar na 15 seconden');
