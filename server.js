@@ -486,10 +486,10 @@ app.get('/import/schedules', async (req, res) => {
             // Maak Schedule Deviation aan voor roostervrije dag
             const payload = {
               description: `Roostervrij - ${userName}`,
-              type: 'roster_free', // Custom type
+              type: 'leave', // Gebruik standaard leave type
               start_date: dateString,
               end_date: dateString,
-              time: 480, // 8 uur standaard werkdag
+              time: 480, // 8 uur standaard werkdag  
               external_ref: `roster_free_${schedule.id}_${dateString}`
             };
             
@@ -531,7 +531,7 @@ app.get('/import/schedules', async (req, res) => {
     
     const totalSchedules = schedules.length;
     const processedUsers = results.filter(r => r.success).length;
-    const totalRosterFreeDays = results.reduce((sum, r) => sum + r.roster_free_days.filter(d => d.success).length, 0);
+    const totalRosterFreeDays = results.reduce((sum, r) => sum + (r.roster_free_days ? r.roster_free_days.filter(d => d.success).length : 0), 0);
     
     console.log(`📊 Roster import: ${processedUsers}/${totalSchedules} gebruikers, ${totalRosterFreeDays} roostervrije dagen toegevoegd`);
     
@@ -807,11 +807,27 @@ async function findResourceByName(userName) {
     const resources = resourcesResponse.data?.data || [];
     console.log(`📋 Gevonden ${resources.length} resources`);
     
-    // Zoek matching resource
+    // Zoek matching resource met verbeterde naammatching
     const matchingResource = resources.find(resource => {
       const resourceName = resource.name?.toLowerCase() || '';
       const searchName = userName.toLowerCase();
-      return resourceName.includes(searchName) || searchName.includes(resourceName);
+      
+      // Exacte match
+      if (resourceName === searchName) return true;
+      
+      // Bevat match (beide kanten)
+      if (resourceName.includes(searchName) || searchName.includes(resourceName)) return true;
+      
+      // Split op spaties en check individuele namen
+      const resourceParts = resourceName.split(' ');
+      const searchParts = searchName.split(' ');
+      
+      // Check of alle delen van searchName voorkomen in resourceName
+      const allPartsMatch = searchParts.every(part => 
+        resourceParts.some(rPart => rPart.includes(part) || part.includes(rPart))
+      );
+      
+      return allPartsMatch;
     });
     
     if (!matchingResource) {
