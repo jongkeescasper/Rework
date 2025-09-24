@@ -37,34 +37,45 @@ app.post('/webhook/rework', async (req, res) => {
     console.log('Data:', JSON.stringify(reqData, null, 2));
 
     if (event === 'request_created') {
-      // Maak een collection in vPlan aan
-      console.log('📝 Maak vPlan collection aan...');
+      // Maak een afwezigheid (Schedule Deviation) in vPlan aan
+      console.log('� Maak vPlan afwezigheid aan...');
       
       const userName = reqData.user?.name || 'Onbekende gebruiker';
       const startDate = reqData.first_date;
       const endDate = reqData.last_date;
       const requestType = reqData.request_type?.name || 'Verlofverzoek';
       
-      const collectionResponse = await axios.post(`${VPLAN_BASE_URL}/collection`, {
-        name: `${requestType} - ${userName}`,
-        description: `Van ${startDate} t/m ${endDate} - ${requestType} (Rework ID: ${reqData.id})`,
-        due_date: endDate,
-        external_ref: `rework_${reqData.id}`,
-        start: startDate,
-        end: endDate
-      }, {
-        headers: {
-          'x-api-key': VPLAN_API_TOKEN,
-          'x-api-env': VPLAN_ENV_ID,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const collectionId = collectionResponse.data.id;
-      console.log('✅ vPlan collection aangemaakt:', collectionId);
+      // Vind de juiste resource (gebruiker)
+      const matchingResource = await findResourceByName(userName);
       
-      // Probeer automatisch te plannen
-      await planCollectionToBoard(collectionId, userName, startDate, endDate);
+      if (matchingResource) {
+        console.log(`✅ Resource gevonden: ${matchingResource.name} (${matchingResource.id})`);
+        
+        // Maak Schedule Deviation (afwezigheid) aan
+        const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, {
+          description: `${requestType} - ${userName}`,
+          type: 'leave', // of 'vacation', 'sick', 'other'
+          start_date: startDate,
+          end_date: endDate,
+          external_ref: `rework_${reqData.id}`
+        }, {
+          headers: {
+            'x-api-key': VPLAN_API_TOKEN,
+            'x-api-env': VPLAN_ENV_ID,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        console.log('✅ vPlan afwezigheid aangemaakt!');
+        console.log(`📅 Periode: ${startDate} tot ${endDate}`);
+        console.log(`👤 Voor: ${matchingResource.name}`);
+        console.log(`🏷️  Type: ${requestType}`);
+        console.log('🎉 Afwezigheid staat nu in Marcel\'s planning!');
+        
+      } else {
+        console.log(`❌ Geen resource gevonden voor "${userName}"`);
+        console.log('💡 Afwezigheid kan niet automatisch worden ingepland');
+      }
       
     } else if (event === 'request_destroyed') {
       const cardId = await findCardIdForRequest(reqData.id);
@@ -273,6 +284,40 @@ async function checkAsyncCardCreation(collectionId, targetBoard, matchingResourc
   } catch (debugError) {
     console.log('🔍 Card check gefaald:', debugError.response?.status, debugError.response?.statusText);
     console.log('💡 Cards worden mogelijk later asynchroon zichtbaar');
+  }
+}
+
+// Helper functie om een resource te vinden op basis van naam
+async function findResourceByName(userName) {
+  try {
+    console.log(`🔍 Zoek resource voor: ${userName}`);
+    
+    const resourcesResponse = await axios.get(`${VPLAN_BASE_URL}/resource`, {
+      headers: {
+        'x-api-key': VPLAN_API_TOKEN,
+        'x-api-env': VPLAN_ENV_ID,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const resources = resourcesResponse.data?.data || [];
+    console.log(`📋 Gevonden ${resources.length} resources`);
+    
+    // Zoek matching resource
+    const matchingResource = resources.find(resource => {
+      const resourceName = resource.name?.toLowerCase() || '';
+      const searchName = userName.toLowerCase();
+      return resourceName.includes(searchName) || searchName.includes(resourceName);
+    });
+    
+    if (!matchingResource) {
+      console.log('📋 Beschikbare resources:', resources.map(r => r.name));
+    }
+    
+    return matchingResource;
+  } catch (error) {
+    console.error('❌ Fout bij zoeken resource:', error.response?.data || error.message);
+    return null;
   }
 }
 
