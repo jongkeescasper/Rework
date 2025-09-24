@@ -82,7 +82,69 @@ GET /import/auto-fetch?user_id=66820
 GET /import/auto-fetch?per_page=10&from_date=2025-09-01
 ```
 
-## ⚙️ Environment Variables
+### 4. **Company Days Import** 🎄
+```
+GET /import/company-days[?parameters]
+```
+**Importeert bedrijfsvrije dagen (feestdagen) voor alle medewerkers uit Rework.**
+
+#### Query Parameters:
+| Parameter | Voorbeeld | Beschrijving |
+|-----------|-----------|--------------|
+| `year` | `2025` | Specifiek jaar (standaard: huidig jaar) |
+| `since` | `2025-01-01` | Start datum (alternatief voor year) |
+| `until` | `2025-12-31` | Eind datum (alternatief voor year) |
+
+#### Voorbeelden:
+```bash
+# Alle feestdagen van 2025
+GET /import/company-days?year=2025
+
+# Feestdagen in periode
+GET /import/company-days?since=2025-10-01&until=2025-12-31
+```
+
+**Wat het doet:**
+- Haalt alle `day_off: true` dagen op uit Rework
+- Maakt Schedule Deviations aan voor **alle vPlan resources**  
+- Type: `"holiday"` met beschrijving zoals "Kerstmis - Bedrijfsvrije dag"
+- Duplicate check: voorkomt overschrijven van bestaande afwezigheid
+
+### 5. **Individual Schedules Import** 📅
+```
+GET /import/schedules?from_date=YYYY-MM-DD&to_date=YYYY-MM-DD[&parameters]
+```
+**Analyseert individuele roosters en maakt "roostervrij" dagen aan voor elke medewerker.**
+
+#### Query Parameters (verplicht):
+| Parameter | Voorbeeld | Beschrijving |
+|-----------|-----------|--------------|
+| `from_date` | `2025-10-01` | **Verplicht** - Start datum analyse |
+| `to_date` | `2025-10-31` | **Verplicht** - Eind datum analyse |
+| `user_id` | `66820` | Optioneel - Specifieke gebruiker |
+
+#### Voorbeelden:  
+```bash
+# Alle roosters voor oktober
+GET /import/schedules?from_date=2025-10-01&to_date=2025-10-31
+
+# Alleen Marcel's rooster
+GET /import/schedules?from_date=2025-10-01&to_date=2025-10-31&user_id=66820
+
+# Volledig kwartaal
+GET /import/schedules?from_date=2025-10-01&to_date=2025-12-31
+```
+
+**Wat het doet:**
+- Haalt schedules op uit Rework per gebruiker
+- Analyseert `workhours` arrays: `[8,8,0,8,8,0,0]` → woensdag = 0 uur = roostervrij
+- Respecteert wisselende roosters (meerdere `workhours` patronen)
+- Maakt Schedule Deviations type `"roster_free"` voor dagen met 0 werkuren
+- Duplicate check: voorkomt overschrijven van bestaande afwezigheid
+
+### 6. **Manual Import**
+```
+POST /import/approved-requests
 
 ### vPlan API
 ```bash
