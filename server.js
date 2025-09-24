@@ -77,7 +77,7 @@ app.post('/webhook/rework', async (req, res) => {
               type: 'leave', // of 'vacation', 'sick', 'other'
               start_date: dayString,
               end_date: dayString, // Zelfde dag voor start en eind
-              time: Math.round(hours), // Rond af naar hele uren voor vPlan API
+              time: Math.round(hours * 60), // Vermenigvuldig met 60 voor minuten
               external_ref: `rework_${reqData.id}_${dayString}`
             };
             
@@ -91,8 +91,8 @@ app.post('/webhook/rework', async (req, res) => {
               }
             });
             
-            deviations.push({ date: dayString, hours: Math.round(hours), success: true });
-            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt (${Math.round(hours)} uur)`);
+            deviations.push({ date: dayString, hours: hours, minutes: Math.round(hours * 60), success: true });
+            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt (${hours} uur = ${Math.round(hours * 60)} minuten)`);
             
           } catch (dayError) {
             console.error(`❌ Fout voor dag ${dayString}:`, dayError.response?.data || dayError.message);
@@ -103,7 +103,7 @@ app.post('/webhook/rework', async (req, res) => {
               config_url: dayError.config?.url,
               config_data: dayError.config?.data
             });
-            deviations.push({ date: dayString, hours: Math.round(hours), success: false, error: dayError.message });
+            deviations.push({ date: dayString, hours: hours, minutes: Math.round(hours * 60), success: false, error: dayError.message });
           }
         }
         
@@ -111,9 +111,10 @@ app.post('/webhook/rework', async (req, res) => {
         const successfulDays = deviations.filter(d => d.success).length;
         const totalDays = deviations.length;
         const totalHours = deviations.filter(d => d.success).reduce((sum, d) => sum + d.hours, 0);
+        const totalMinutes = deviations.filter(d => d.success).reduce((sum, d) => sum + d.minutes, 0);
         
         console.log(`✅ vPlan afwezigheid aangemaakt voor ${successfulDays}/${totalDays} dagen!`);
-        console.log(`📅 Totaal: ${totalHours} uur afwezigheid`);
+        console.log(`📅 Totaal: ${totalHours} uur (${totalMinutes} minuten) afwezigheid`);
         console.log(`👤 Voor: ${matchingResource.name}`);
         console.log(`🏷️  Type: ${requestType}`);
         console.log('🎉 Volledige afwezigheid staat nu in Marcel\'s planning!');
