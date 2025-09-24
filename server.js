@@ -51,26 +51,53 @@ app.post('/webhook/rework', async (req, res) => {
       if (matchingResource) {
         console.log(`✅ Resource gevonden: ${matchingResource.name} (${matchingResource.id})`);
         
-        // Maak Schedule Deviation (afwezigheid) aan
-        const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, {
-          description: `${requestType} - ${userName}`,
-          type: 'leave', // of 'vacation', 'sick', 'other'
-          start_date: startDate,
-          end_date: endDate,
-          external_ref: `rework_${reqData.id}`
-        }, {
-          headers: {
-            'x-api-key': VPLAN_API_TOKEN,
-            'x-api-env': VPLAN_ENV_ID,
-            'Content-Type': 'application/json'
+        // Maak voor elke dag een aparte Schedule Deviation aan
+        const startDateObj = new Date(startDate);
+        const endDateObj = new Date(endDate);
+        const deviations = [];
+        
+        console.log(`📅 Maak afwezigheid aan van ${startDate} tot ${endDate}...`);
+        
+        // Loop door alle dagen in de periode
+        for (let currentDate = new Date(startDateObj); currentDate <= endDateObj; currentDate.setDate(currentDate.getDate() + 1)) {
+          const dayString = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+          
+          try {
+            console.log(`📅 Verwerk dag: ${dayString}`);
+            
+            const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, {
+              description: `${requestType} - ${userName}`,
+              type: 'leave', // of 'vacation', 'sick', 'other'
+              start_date: dayString,
+              end_date: dayString, // Zelfde dag voor start en eind
+              time: 8, // 8 uur afwezig (volledige werkdag)
+              external_ref: `rework_${reqData.id}_${dayString}`
+            }, {
+              headers: {
+                'x-api-key': VPLAN_API_TOKEN,
+                'x-api-env': VPLAN_ENV_ID,
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            deviations.push({ date: dayString, success: true });
+            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt`);
+            
+          } catch (dayError) {
+            console.error(`❌ Fout voor dag ${dayString}:`, dayError.response?.data || dayError.message);
+            deviations.push({ date: dayString, success: false, error: dayError.message });
           }
-        });
-
-        console.log('✅ vPlan afwezigheid aangemaakt!');
+        }
+        
+        // Samenvatting
+        const successfulDays = deviations.filter(d => d.success).length;
+        const totalDays = deviations.length;
+        
+        console.log(`✅ vPlan afwezigheid aangemaakt voor ${successfulDays}/${totalDays} dagen!`);
         console.log(`📅 Periode: ${startDate} tot ${endDate}`);
         console.log(`👤 Voor: ${matchingResource.name}`);
         console.log(`🏷️  Type: ${requestType}`);
-        console.log('🎉 Afwezigheid staat nu in Marcel\'s planning!');
+        console.log('🎉 Volledige afwezigheid staat nu in Marcel\'s planning!');
         
       } else {
         console.log(`❌ Geen resource gevonden voor "${userName}"`);
