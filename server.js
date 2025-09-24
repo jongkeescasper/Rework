@@ -59,21 +59,31 @@ app.post('/webhook/rework', async (req, res) => {
         
         // Loop door elke slot (dag) uit Rework
         for (const slot of slots) {
-          const slotDate = new Date(slot.date);
-          const dayString = slotDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+          // Parse datum direct uit ISO string om tijdzone problemen te voorkomen
+          const dayString = slot.date.split('T')[0]; // Krijg YYYY-MM-DD direct uit ISO string
           const hours = parseFloat(slot.hours) || 8; // Gebruik exacte uren uit slot
           
           try {
             console.log(`📅 Verwerk dag: ${dayString} (${hours} uur)`);
+            console.log(`🔍 Debug - Slot data:`, {
+              original_date: slot.date,
+              parsed_day: dayString,
+              hours: hours,
+              all_day: slot.all_day
+            });
             
-            const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, {
+            const payload = {
               description: `${requestType} - ${userName}`,
               type: 'leave', // of 'vacation', 'sick', 'other'
               start_date: dayString,
               end_date: dayString, // Zelfde dag voor start en eind
-              time: hours, // Exacte uren uit Rework slot
+              time: Math.round(hours), // Rond af naar hele uren voor vPlan API
               external_ref: `rework_${reqData.id}_${dayString}`
-            }, {
+            };
+            
+            console.log(`📤 Verstuur naar vPlan:`, payload);
+            
+            const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, payload, {
               headers: {
                 'x-api-key': VPLAN_API_TOKEN,
                 'x-api-env': VPLAN_ENV_ID,
@@ -81,12 +91,19 @@ app.post('/webhook/rework', async (req, res) => {
               }
             });
             
-            deviations.push({ date: dayString, hours: hours, success: true });
-            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt (${hours} uur)`);
+            deviations.push({ date: dayString, hours: Math.round(hours), success: true });
+            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt (${Math.round(hours)} uur)`);
             
           } catch (dayError) {
             console.error(`❌ Fout voor dag ${dayString}:`, dayError.response?.data || dayError.message);
-            deviations.push({ date: dayString, hours: hours, success: false, error: dayError.message });
+            console.error(`🔍 Debug - API Error Details:`, {
+              status: dayError.response?.status,
+              statusText: dayError.response?.statusText,
+              headers: dayError.response?.headers,
+              config_url: dayError.config?.url,
+              config_data: dayError.config?.data
+            });
+            deviations.push({ date: dayString, hours: Math.round(hours), success: false, error: dayError.message });
           }
         }
         
