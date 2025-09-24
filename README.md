@@ -143,22 +143,6 @@ GET /import/schedules?from_date=2025-10-01&to_date=2025-12-31
 - Beschrijving: `"Roostervrij - [Gebruikersnaam]"`
 - Duplicate check: voorkomt overschrijven van bestaande afwezigheid
 
-### 6. **Manual Import**
-```
-POST /import/approved-requests
-
-### vPlan API
-```bash
-VPLAN_API_TOKEN=your-vplan-api-token    # of VPLAN_API_KEY
-VPLAN_ENV_ID=your-vplan-environment-id  # of VPLAN_API_ENV
-```
-
-### Rework API  
-```bash
-REWORK_API_TOKEN=GCHooHemP2FYZo2D4CyB
-REWORK_COMPANY_ID=2854
-```
-
 ### Optioneel
 ```bash
 PORT=3000  # Server poort (Render zet dit automatisch)
