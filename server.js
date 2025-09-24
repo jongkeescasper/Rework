@@ -51,26 +51,27 @@ app.post('/webhook/rework', async (req, res) => {
       if (matchingResource) {
         console.log(`✅ Resource gevonden: ${matchingResource.name} (${matchingResource.id})`);
         
-        // Maak voor elke dag een aparte Schedule Deviation aan
-        const startDateObj = new Date(startDate);
-        const endDateObj = new Date(endDate);
+        // Gebruik slots data voor precieze dagen en uren
+        const slots = reqData.slots || [];
         const deviations = [];
         
-        console.log(`📅 Maak afwezigheid aan van ${startDate} tot ${endDate}...`);
+        console.log(`📅 Maak afwezigheid aan voor ${slots.length} slot(s)...`);
         
-        // Loop door alle dagen in de periode
-        for (let currentDate = new Date(startDateObj); currentDate <= endDateObj; currentDate.setDate(currentDate.getDate() + 1)) {
-          const dayString = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+        // Loop door elke slot (dag) uit Rework
+        for (const slot of slots) {
+          const slotDate = new Date(slot.date);
+          const dayString = slotDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+          const hours = parseFloat(slot.hours) || 8; // Gebruik exacte uren uit slot
           
           try {
-            console.log(`📅 Verwerk dag: ${dayString}`);
+            console.log(`📅 Verwerk dag: ${dayString} (${hours} uur)`);
             
             const deviationResponse = await axios.post(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/`, {
               description: `${requestType} - ${userName}`,
               type: 'leave', // of 'vacation', 'sick', 'other'
               start_date: dayString,
               end_date: dayString, // Zelfde dag voor start en eind
-              time: 8, // 8 uur afwezig (volledige werkdag)
+              time: hours, // Exacte uren uit Rework slot
               external_ref: `rework_${reqData.id}_${dayString}`
             }, {
               headers: {
@@ -80,21 +81,22 @@ app.post('/webhook/rework', async (req, res) => {
               }
             });
             
-            deviations.push({ date: dayString, success: true });
-            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt`);
+            deviations.push({ date: dayString, hours: hours, success: true });
+            console.log(`✅ Afwezigheid voor ${dayString} aangemaakt (${hours} uur)`);
             
           } catch (dayError) {
             console.error(`❌ Fout voor dag ${dayString}:`, dayError.response?.data || dayError.message);
-            deviations.push({ date: dayString, success: false, error: dayError.message });
+            deviations.push({ date: dayString, hours: hours, success: false, error: dayError.message });
           }
         }
         
         // Samenvatting
         const successfulDays = deviations.filter(d => d.success).length;
         const totalDays = deviations.length;
+        const totalHours = deviations.filter(d => d.success).reduce((sum, d) => sum + d.hours, 0);
         
         console.log(`✅ vPlan afwezigheid aangemaakt voor ${successfulDays}/${totalDays} dagen!`);
-        console.log(`📅 Periode: ${startDate} tot ${endDate}`);
+        console.log(`📅 Totaal: ${totalHours} uur afwezigheid`);
         console.log(`👤 Voor: ${matchingResource.name}`);
         console.log(`🏷️  Type: ${requestType}`);
         console.log('🎉 Volledige afwezigheid staat nu in Marcel\'s planning!');
