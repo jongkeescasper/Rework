@@ -28,6 +28,111 @@ app.get('/', (req, res) => {
   });
 });
 
+// Import endpoint voor bestaande goedgekeurde verlofaanvragen
+app.post('/import/approved-requests', async (req, res) => {
+  try {
+    console.log('📥 Import van bestaande goedgekeurde verlofaanvragen gestart...');
+    
+    // Simuleer Rework API call (je moet hier je eigen Rework API credentials gebruiken)
+    // const reworkResponse = await axios.get('https://api.rework.com/requests?status=ok', {
+    //   headers: { 'Authorization': `Bearer ${process.env.REWORK_API_TOKEN}` }
+    // });
+    
+    // Voor nu: handmatige data of via request body
+    const requestsToImport = req.body.requests || [];
+    
+    if (requestsToImport.length === 0) {
+      return res.status(400).json({
+        error: 'Geen requests gevonden om te importeren',
+        message: 'Stuur een POST request met een "requests" array in de body'
+      });
+    }
+    
+    console.log(`🔍 Gevonden ${requestsToImport.length} request(s) om te importeren`);
+    
+    const results = [];
+    
+    // Verwerk elke request
+    for (const request of requestsToImport) {
+      try {
+        console.log(`📋 Importeer request ${request.id}: ${request.user?.name}`);
+        
+        // Check of het goedgekeurd is
+        if (request.status !== 'ok') {
+          console.log(`⏭️ Skip request ${request.id} - status: ${request.status} (niet goedgekeurd)`);
+          results.push({ 
+            id: request.id, 
+            success: false, 
+            reason: `Status: ${request.status} (niet goedgekeurd)` 
+          });
+          continue;
+        }
+        
+        // Check of al geïmporteerd (via external_ref)
+        const userName = request.user?.name || 'Onbekende gebruiker';
+        const requestType = request.request_type?.name || 'Verlofverzoek';
+        
+        const alreadyImported = await checkIfAlreadyImported(request.id, userName);
+        if (alreadyImported) {
+          console.log(`⏭️ Skip request ${request.id} - al eerder geïmporteerd`);
+          results.push({ 
+            id: request.id, 
+            success: false, 
+            reason: 'Al eerder geïmporteerd' 
+          });
+          continue;
+        }
+        
+        // Importeer via bestaande Schedule Deviation logica
+        await createScheduleDeviation(request, userName, requestType);
+        
+        results.push({ 
+          id: request.id, 
+          success: true, 
+          user: userName,
+          type: requestType,
+          days: request.slots?.length || 0
+        });
+        
+        console.log(`✅ Request ${request.id} succesvol geïmporteerd voor ${userName}`);
+        
+      } catch (importError) {
+        console.error(`❌ Fout bij importeren request ${request.id}:`, importError.message);
+        results.push({ 
+          id: request.id, 
+          success: false, 
+          reason: importError.message 
+        });
+      }
+    }
+    
+    // Samenvatting
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+    
+    console.log(`📊 Import voltooid: ${successful} succesvol, ${failed} gefaald`);
+    
+    res.json({
+      message: 'Import voltooid',
+      summary: {
+        total: requestsToImport.length,
+        successful: successful,
+        failed: failed
+      },
+      results: results,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Fout bij import:', error);
+    res.status(500).json({ 
+      error: 'Import gefaald', 
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Webhook endpoint voor Rework events
 app.post('/webhook/rework', async (req, res) => {
   try {
@@ -188,6 +293,48 @@ async function findResourceByName(userName) {
   } catch (error) {
     console.error('❌ Fout bij zoeken resource:', error.response?.data || error.message);
     return null;
+  }
+}
+
+// Helper functie om te checken of een Rework request al eerder geïmporteerd is
+async function checkIfAlreadyImported(reworkRequestId, userName) {
+  try {
+    console.log(`🔍 Check of request ${reworkRequestId} al geïmporteerd is voor ${userName}...`);
+    
+    // Zoek de resource
+    const matchingResource = await findResourceByName(userName);
+    if (!matchingResource) {
+      console.log(`❌ Resource niet gevonden voor ${userName}`);
+      return false;
+    }
+    
+    // Haal Schedule Deviations op voor deze resource
+    const deviationsResponse = await axios.get(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation`, {
+      headers: {
+        'x-api-key': VPLAN_API_TOKEN,
+        'x-api-env': VPLAN_ENV_ID,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const deviations = deviationsResponse.data?.data || [];
+    
+    // Check voor external_ref die deze Rework request ID bevat
+    const existingDeviations = deviations.filter(deviation => 
+      deviation.external_ref && deviation.external_ref.includes(`rework_${reworkRequestId}`)
+    );
+    
+    if (existingDeviations.length > 0) {
+      console.log(`✅ Request ${reworkRequestId} al geïmporteerd - gevonden ${existingDeviations.length} Schedule Deviation(s)`);
+      return true;
+    } else {
+      console.log(`📋 Request ${reworkRequestId} nog niet geïmporteerd`);
+      return false;
+    }
+    
+  } catch (error) {
+    console.error(`❌ Fout bij checken import status voor request ${reworkRequestId}:`, error.response?.data || error.message);
+    return false; // Bij twijfel niet importeren
   }
 }
 
