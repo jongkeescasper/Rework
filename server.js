@@ -105,18 +105,73 @@ app.post('/webhook/rework', async (req, res) => {
       }
       
     } else if (event === 'request_destroyed') {
-      const cardId = await findCardIdForRequest(reqData.id);
-      if (cardId) {
-        console.log('🗑️ Verwijder vPlan collection:', cardId);
-        await axios.delete(`${VPLAN_BASE_URL}/collection/${cardId}`, {
-          headers: { 
-            'x-api-key': VPLAN_API_TOKEN,
-            'x-api-env': VPLAN_ENV_ID
+      // Verwijder Schedule Deviations voor deze aanvraag
+      console.log('🗑️ Verwijder vPlan afwezigheid...');
+      
+      const userName = reqData.user?.name || 'Onbekende gebruiker';
+      const startDate = reqData.first_date;
+      const endDate = reqData.last_date;
+      
+      // Vind de juiste resource (gebruiker)
+      const matchingResource = await findResourceByName(userName);
+      
+      if (matchingResource) {
+        console.log(`✅ Resource gevonden: ${matchingResource.name} (${matchingResource.id})`);
+        
+        // Haal alle Schedule Deviations op voor deze resource
+        console.log('📋 Zoek Schedule Deviations met external_ref...');
+        
+        try {
+          const deviationsResponse = await axios.get(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation`, {
+            headers: {
+              'x-api-key': VPLAN_API_TOKEN,
+              'x-api-env': VPLAN_ENV_ID,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          const deviations = deviationsResponse.data?.data || [];
+          console.log(`📋 Gevonden ${deviations.length} Schedule Deviations voor ${matchingResource.name}`);
+          
+          // Zoek deviations die bij deze Rework request horen (met external_ref)
+          const reworkDeviations = deviations.filter(deviation => 
+            deviation.external_ref && deviation.external_ref.includes(`rework_${reqData.id}`)
+          );
+          
+          console.log(`🎯 Gevonden ${reworkDeviations.length} Schedule Deviations voor request ${reqData.id}`);
+          
+          if (reworkDeviations.length > 0) {
+            // Verwijder alle gevonden deviations
+            for (const deviation of reworkDeviations) {
+              try {
+                console.log(`🗑️ Verwijder Schedule Deviation: ${deviation.id} (${deviation.start_date})`);
+                await axios.delete(`${VPLAN_BASE_URL}/resource/${matchingResource.id}/schedule_deviation/${deviation.id}`, {
+                  headers: {
+                    'x-api-key': VPLAN_API_TOKEN,
+                    'x-api-env': VPLAN_ENV_ID
+                  }
+                });
+                console.log(`✅ Schedule Deviation ${deviation.id} verwijderd`);
+              } catch (deleteError) {
+                console.error(`❌ Fout bij verwijderen Schedule Deviation ${deviation.id}:`, deleteError.response?.data || deleteError.message);
+              }
+            }
+            
+            console.log(`✅ Afwezigheid verwijderd uit ${matchingResource.name}'s planning!`);
+            console.log(`🗑️ ${reworkDeviations.length} Schedule Deviation(s) verwijderd`);
+            
+          } else {
+            console.log(`❌ Geen Schedule Deviations gevonden voor request ${reqData.id}`);
+            console.log('💡 Mogelijk al eerder verwijderd of niet automatisch aangemaakt');
           }
-        });
-        console.log('✅ vPlan collection verwijderd');
+          
+        } catch (listError) {
+          console.error('❌ Fout bij ophalen Schedule Deviations:', listError.response?.data || listError.message);
+        }
+        
       } else {
-        console.log('❌ Geen collection ID gevonden voor request:', reqData.id);
+        console.log(`❌ Geen resource gevonden voor "${userName}"`);
+        console.log('💡 Kan Schedule Deviations niet verwijderen');
       }
     } else {
       console.log('Onbekend event:', event);
@@ -346,13 +401,6 @@ async function findResourceByName(userName) {
     console.error('❌ Fout bij zoeken resource:', error.response?.data || error.message);
     return null;
   }
-}
-
-function findCardIdForRequest(reworkRequestId) {
-  // hier moet je eigen logica/dataopslag maken: 
-  // bv. een DB waarin je opslaat: reworkRequestId ↔ vPlanCardId
-  console.log('Zoek card ID voor request:', reworkRequestId);
-  return Promise.resolve(null); // placeholder
 }
 
 const port = process.env.PORT || 3000;
