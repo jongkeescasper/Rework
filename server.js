@@ -205,6 +205,358 @@ app.get('/import/auto-fetch', async (req, res) => {
   }
 });
 
+// Company Days import - feestdagen voor iedereen
+app.get('/import/company-days', async (req, res) => {
+  try {
+    console.log('🎄 Importeer bedrijfsvrije dagen (feestdagen) voor alle medewerkers...');
+    
+    // Check Rework API credentials
+    if (!REWORK_API_TOKEN || !REWORK_COMPANY_ID) {
+      return res.status(500).json({
+        error: 'Rework API niet geconfigureerd',
+        message: 'REWORK_API_TOKEN en REWORK_COMPANY_ID environment variables zijn vereist'
+      });
+    }
+    
+    // Query parameters
+    const year = req.query.year || new Date().getFullYear();
+    const since = req.query.since;
+    const until = req.query.until;
+    
+    // Bouw Rework API URL voor company days
+    const params = new URLSearchParams();
+    if (year && !since && !until) params.append('year', year.toString());
+    if (since) params.append('since', since);
+    if (until) params.append('until', until);
+    
+    const companyDaysUrl = `https://api.rework.nl/v2/${REWORK_COMPANY_ID}/leave/company_days?${params.toString()}`;
+    console.log(`📡 Ophalen bedrijfsdagen: ${companyDaysUrl}`);
+    
+    // Haal company days op uit Rework
+    const companyDaysResponse = await axios.get(companyDaysUrl, {
+      headers: {
+        'Authorization': `Bearer ${REWORK_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const companyDays = companyDaysResponse.data || [];
+    const freeDays = companyDays.filter(day => day.day_off === true);
+    
+    console.log(`📅 Gevonden ${companyDays.length} bedrijfsdagen, waarvan ${freeDays.length} vrije dagen`);
+    
+    if (freeDays.length === 0) {
+      return res.json({
+        message: 'Geen vrije bedrijfsdagen gevonden',
+        filters: { year, since, until },
+        total: 0,
+        results: []
+      });
+    }
+    
+    // Haal alle vPlan resources op
+    const resourcesResponse = await axios.get(`${VPLAN_BASE_URL}/resource`, {
+      headers: {
+        'x-api-key': VPLAN_API_TOKEN,
+        'x-api-env': VPLAN_ENV_ID,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const allResources = resourcesResponse.data?.data || [];
+    console.log(`👥 Gevonden ${allResources.length} resources in vPlan`);
+    
+    const results = [];
+    
+    // Voor elke vrije dag
+    for (const freeDay of freeDays) {
+      console.log(`🎄 Verwerk vrije dag: ${freeDay.date} (${freeDay.label})`);
+      
+      // Voor elke resource
+      for (const resource of allResources) {
+        try {
+          // Check of er al afwezigheid staat op deze dag
+          const existingDeviations = await getScheduleDeviationsForDate(resource.id, freeDay.date);
+          const hasExistingAbsence = existingDeviations.some(dev => 
+            dev.start_date === freeDay.date && 
+            (dev.type === 'leave' || dev.type === 'holiday' || dev.external_ref?.includes('company_day'))
+          );
+          
+          if (hasExistingAbsence) {
+            console.log(`⏭️ Skip ${resource.name} op ${freeDay.date} - al afwezig`);
+            results.push({
+              date: freeDay.date,
+              resource: resource.name,
+              label: freeDay.label,
+              success: false,
+              reason: 'Al afwezig op deze dag'
+            });
+            continue;
+          }
+          
+          // Maak Schedule Deviation aan
+          const payload = {
+            description: `${freeDay.label} - Bedrijfsvrije dag`,
+            type: 'holiday',
+            start_date: freeDay.date,
+            end_date: freeDay.date,
+            time: 480, // 8 uur in minuten (standaard werkdag)
+            external_ref: `company_day_${freeDay.id}_${freeDay.date}`
+          };
+          
+          await axios.post(`${VPLAN_BASE_URL}/resource/${resource.id}/schedule_deviation/`, payload, {
+            headers: {
+              'x-api-key': VPLAN_API_TOKEN,
+              'x-api-env': VPLAN_ENV_ID,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          results.push({
+            date: freeDay.date,
+            resource: resource.name,
+            label: freeDay.label,
+            success: true,
+            hours: 8
+          });
+          
+          console.log(`✅ ${resource.name}: ${freeDay.label} op ${freeDay.date}`);
+          
+        } catch (error) {
+          console.error(`❌ Fout ${resource.name} op ${freeDay.date}:`, error.message);
+          results.push({
+            date: freeDay.date,
+            resource: resource.name,
+            label: freeDay.label,
+            success: false,
+            reason: error.message
+          });
+        }
+      }
+    }
+    
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+    
+    console.log(`📊 Company days import: ${successful} succesvol, ${failed} overgeslagen/gefaald`);
+    
+    res.json({
+      message: 'Company days import voltooid',
+      summary: {
+        total_days: freeDays.length,
+        total_resources: allResources.length,
+        total_entries: results.length,
+        successful: successful,
+        failed: failed
+      },
+      results: results,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Fout bij company days import:', error);
+    res.status(500).json({
+      error: 'Company days import gefaald',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Roster import - individuele roosters voor alle medewerkers
+app.get('/import/schedules', async (req, res) => {
+  try {
+    console.log('📅 Importeer individuele roosters voor alle medewerkers...');
+    
+    // Check Rework API credentials
+    if (!REWORK_API_TOKEN || !REWORK_COMPANY_ID) {
+      return res.status(500).json({
+        error: 'Rework API niet geconfigureerd',
+        message: 'REWORK_API_TOKEN en REWORK_COMPANY_ID environment variables zijn vereist'
+      });
+    }
+    
+    // Query parameters
+    const fromDate = req.query.from_date; // bijv: 2025-10-01
+    const toDate = req.query.to_date;     // bijv: 2025-10-31
+    const userId = req.query.user_id;     // specifieke gebruiker
+    
+    if (!fromDate || !toDate) {
+      return res.status(400).json({
+        error: 'from_date en to_date zijn verplicht',
+        message: 'Gebruik: /import/schedules?from_date=2025-10-01&to_date=2025-10-31'
+      });
+    }
+    
+    // Haal alle schedules op uit Rework
+    const params = new URLSearchParams({
+      from_date: fromDate,
+      to_date: toDate,
+      per_page: '100'
+    });
+    if (userId) params.append('user_id', userId);
+    
+    const schedulesUrl = `https://api.rework.nl/v2/${REWORK_COMPANY_ID}/leave/schedules?${params.toString()}`;
+    console.log(`📡 Ophalen roosters: ${schedulesUrl}`);
+    
+    const schedulesResponse = await axios.get(schedulesUrl, {
+      headers: {
+        'Authorization': `Bearer ${REWORK_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const schedules = schedulesResponse.data || [];
+    console.log(`📋 Gevonden ${schedules.length} roosters`);
+    
+    if (schedules.length === 0) {
+      return res.json({
+        message: 'Geen roosters gevonden',
+        filters: { from_date: fromDate, to_date: toDate, user_id: userId },
+        total: 0,
+        results: []
+      });
+    }
+    
+    const results = [];
+    
+    // Analyseer elke schedule
+    for (const schedule of schedules) {
+      const userName = schedule.user?.name || 'Onbekende gebruiker';
+      console.log(`👤 Verwerk rooster voor: ${userName}`);
+      
+      // Vind vPlan resource
+      const vplanResource = await findResourceByName(userName);
+      if (!vplanResource) {
+        console.log(`❌ Resource niet gevonden voor ${userName}`);
+        results.push({
+          user: userName,
+          success: false,
+          reason: `Resource niet gevonden in vPlan`
+        });
+        continue;
+      }
+      
+      // Analyseer roosterperiode dag voor dag
+      const startDate = new Date(fromDate);
+      const endDate = new Date(toDate);
+      const userResults = [];
+      
+      for (let currentDate = new Date(startDate); currentDate <= endDate; currentDate.setDate(currentDate.getDate() + 1)) {
+        const dateString = currentDate.toISOString().split('T')[0];
+        const dayOfWeek = currentDate.getDay(); // 0=zondag, 1=maandag, etc.
+        const reworkDayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Rework: 0=maandag, 6=zondag
+        
+        // Check of schedule actief is op deze datum
+        const scheduleStartDate = new Date(schedule.started_on);
+        const scheduleEndDate = schedule.ended_on ? new Date(schedule.ended_on) : null;
+        
+        if (currentDate < scheduleStartDate || (scheduleEndDate && currentDate > scheduleEndDate)) {
+          continue; // Schedule niet actief op deze datum
+        }
+        
+        // Bepaal welke week in het wisselende rooster
+        const daysSinceStart = Math.floor((currentDate - scheduleStartDate) / (1000 * 60 * 60 * 24));
+        const weekIndex = Math.floor(daysSinceStart / 7) % schedule.workhours.length;
+        const workhoursForWeek = schedule.workhours[weekIndex];
+        const hoursForDay = workhoursForWeek[reworkDayIndex] || 0;
+        
+        if (hoursForDay === 0) {
+          // Roostervrije dag gevonden
+          console.log(`📅 ${userName} roostervrij op ${dateString} (${hoursForDay} uur)`);
+          
+          try {
+            // Check of er al afwezigheid staat
+            const existingDeviations = await getScheduleDeviationsForDate(vplanResource.id, dateString);
+            const hasExistingAbsence = existingDeviations.some(dev => 
+              dev.start_date === dateString && 
+              (dev.type === 'leave' || dev.type === 'holiday' || dev.type === 'roster_free')
+            );
+            
+            if (hasExistingAbsence) {
+              console.log(`⏭️ Skip ${userName} op ${dateString} - al afwezig`);
+              userResults.push({
+                date: dateString,
+                success: false,
+                reason: 'Al afwezig op deze dag'
+              });
+              continue;
+            }
+            
+            // Maak Schedule Deviation aan voor roostervrije dag
+            const payload = {
+              description: `Roostervrij - ${userName}`,
+              type: 'roster_free', // Custom type
+              start_date: dateString,
+              end_date: dateString,
+              time: 480, // 8 uur standaard werkdag
+              external_ref: `roster_free_${schedule.id}_${dateString}`
+            };
+            
+            await axios.post(`${VPLAN_BASE_URL}/resource/${vplanResource.id}/schedule_deviation/`, payload, {
+              headers: {
+                'x-api-key': VPLAN_API_TOKEN,
+                'x-api-env': VPLAN_ENV_ID,
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            userResults.push({
+              date: dateString,
+              success: true,
+              hours: 8
+            });
+            
+            console.log(`✅ ${userName} roostervrij toegevoegd: ${dateString}`);
+            
+          } catch (error) {
+            console.error(`❌ Fout ${userName} op ${dateString}:`, error.message);
+            userResults.push({
+              date: dateString,
+              success: false,
+              reason: error.message
+            });
+          }
+        }
+      }
+      
+      results.push({
+        user: userName,
+        schedule_id: schedule.id,
+        schedule_period: `${schedule.started_on} - ${schedule.ended_on || 'huidig'}`,
+        roster_free_days: userResults,
+        success: userResults.length > 0
+      });
+    }
+    
+    const totalSchedules = schedules.length;
+    const processedUsers = results.filter(r => r.success).length;
+    const totalRosterFreeDays = results.reduce((sum, r) => sum + r.roster_free_days.filter(d => d.success).length, 0);
+    
+    console.log(`📊 Roster import: ${processedUsers}/${totalSchedules} gebruikers, ${totalRosterFreeDays} roostervrije dagen toegevoegd`);
+    
+    res.json({
+      message: 'Roster import voltooid',
+      summary: {
+        total_schedules: totalSchedules,
+        processed_users: processedUsers,
+        total_roster_free_days: totalRosterFreeDays
+      },
+      filters: { from_date: fromDate, to_date: toDate, user_id: userId },
+      results: results,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Fout bij roster import:', error);
+    res.status(500).json({
+      error: 'Roster import gefaald',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Import endpoint voor bestaande goedgekeurde verlofaanvragen
 app.post('/import/approved-requests', async (req, res) => {
   try {
@@ -470,6 +822,31 @@ async function findResourceByName(userName) {
   } catch (error) {
     console.error('❌ Fout bij zoeken resource:', error.response?.data || error.message);
     return null;
+  }
+}
+
+// Helper functie om Schedule Deviations op te halen voor een specifieke datum
+async function getScheduleDeviationsForDate(resourceId, date) {
+  try {
+    const deviationsResponse = await axios.get(`${VPLAN_BASE_URL}/resource/${resourceId}/schedule_deviation`, {
+      headers: {
+        'x-api-key': VPLAN_API_TOKEN,
+        'x-api-env': VPLAN_ENV_ID,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const allDeviations = deviationsResponse.data?.data || [];
+    
+    // Filter op specifieke datum
+    const deviationsForDate = allDeviations.filter(deviation => 
+      deviation.start_date === date
+    );
+    
+    return deviationsForDate;
+  } catch (error) {
+    console.error(`❌ Fout bij ophalen Schedule Deviations voor ${resourceId} op ${date}:`, error.message);
+    return [];
   }
 }
 
