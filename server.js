@@ -670,38 +670,49 @@ app.post('/webhook/rework', async (req, res) => {
     console.log(`📥 Rework webhook ontvangen: ${event}`);
     console.log('Data:', JSON.stringify(reqData, null, 2));
 
-    if (event === 'request_created') {
-      // Bij aanmaken alleen loggen, pas bij goedkeuring actie ondernemen
-      console.log('📝 Verlofaanvraag aangemaakt, wacht op goedkeuring...');
-      console.log(`👤 ${reqData.user?.name}: ${reqData.request_type?.name}`);
-      console.log(`📅 ${reqData.first_date?.split('T')[0]} tot ${reqData.last_date?.split('T')[0]}`);
-      console.log('⏳ Geen actie ondernomen - wacht op goedkeuring');
-      
-    } else if (event === 'request_updated') {
-      // Check of de status is gewijzigd naar 'ok' (goedgekeurd)
-      const statusChanged = reqData.changes?.status;
-      const currentStatus = reqData.status;
-      
-      console.log('� Verlofaanvraag bijgewerkt');
-      console.log(`� Status: ${currentStatus}`);
-      
-      if (statusChanged) {
-        console.log(`📊 Status gewijzigd: ${statusChanged[0]} → ${statusChanged[1]}`);
-      }
-      
-      if (currentStatus === 'ok' && statusChanged && statusChanged[1] === 'ok') {
-        // Status is gewijzigd naar goedgekeurd - maak vPlan afwezigheid aan
-        console.log('✅ Verlofaanvraag goedgekeurd - maak vPlan afwezigheid aan...');
-        
-        const userName = reqData.user?.name || 'Onbekende gebruiker';
-        const requestType = reqData.request_type?.name || 'Verlofverzoek';
-        
-        await createScheduleDeviation(reqData, userName, requestType);
-      } else {
-        console.log('ℹ️ Geen actie ondernomen - nog niet goedgekeurd of andere wijziging');
-      }
-      
-    } else if (event === 'request_destroyed') {
+    // **RESPOND IMMEDIATELY to prevent Rework timeout**
+    res.status(200).json({ 
+      message: 'Webhook ontvangen en wordt async verwerkt', 
+      event: event,
+      timestamp: new Date().toISOString(),
+      processing: 'async'
+    });
+
+    // Process webhook asynchronously after response is sent
+    setImmediate(async () => {
+      try {
+        if (event === 'request_created') {
+          // Bij aanmaken alleen loggen, pas bij goedkeuring actie ondernemen
+          console.log('📝 Verlofaanvraag aangemaakt, wacht op goedkeuring...');
+          console.log(`👤 ${reqData.user?.name}: ${reqData.request_type?.name}`);
+          console.log(`📅 ${reqData.first_date?.split('T')[0]} tot ${reqData.last_date?.split('T')[0]}`);
+          console.log('⏳ Geen actie ondernomen - wacht op goedkeuring');
+          
+        } else if (event === 'request_updated') {
+          // Check of de status is gewijzigd naar 'ok' (goedgekeurd)
+          const statusChanged = reqData.changes?.status;
+          const currentStatus = reqData.status;
+          
+          console.log('🔄 Verlofaanvraag bijgewerkt');
+          console.log(`📊 Status: ${currentStatus}`);
+          
+          if (statusChanged) {
+            console.log(`📊 Status gewijzigd: ${statusChanged[0]} → ${statusChanged[1]}`);
+          }
+          
+          if (currentStatus === 'ok' && statusChanged && statusChanged[1] === 'ok') {
+            // Status is gewijzigd naar goedgekeurd - maak vPlan afwezigheid aan
+            console.log('✅ Verlofaanvraag goedgekeurd - maak vPlan afwezigheid aan...');
+            
+            const userName = reqData.user?.name || 'Onbekende gebruiker';
+            const requestType = reqData.request_type?.name || 'Verlofverzoek';
+            
+            await createScheduleDeviation(reqData, userName, requestType);
+          } else {
+            console.log('ℹ️ Geen actie ondernomen - nog niet goedgekeurd of andere wijziging');
+          }
+          
+        } else if (event === 'request_destroyed') {
       // Verwijder Schedule Deviations voor deze aanvraag
       console.log('🗑️ Verwijder vPlan afwezigheid...');
       
@@ -774,20 +785,23 @@ app.post('/webhook/rework', async (req, res) => {
       console.log('Onbekend event:', event);
     }
 
-    res.status(200).json({ 
-      message: 'Webhook succesvol verwerkt',
-      event: event,
-      timestamp: new Date().toISOString()
+      } catch (asyncError) {
+        console.error('❌ Fout bij async webhook verwerking:', asyncError.message);
+        console.error('Stack trace:', asyncError.stack);
+      }
     });
+    
   } catch (err) {
-    console.error('Error handling Rework webhook:', err);
-    console.error('Error details:', err.message);
-    console.error('Stack trace:', err.stack);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: err.message,
-      timestamp: new Date().toISOString()
-    });
+    console.error('❌ Kritieke fout in webhook handler:', err);
+    
+    // Als response nog niet verstuurd, stuur error response
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: 'Webhook handler fout',
+        message: err.message,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 });
 
