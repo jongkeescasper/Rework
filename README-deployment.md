@@ -6,16 +6,6 @@ Node.js webhook server that automatically synchronizes Rework leave requests wit
 
 ### 1. Environment Variables
 
-Required environment variables:
-
-```bash
-# vPlan API
-VPLAN_API_TOKEN=your-vplan-api-token
-VPLAN_ENV_ID=your-vplan-environment-id
-
-# Rework API  
-REWORK_API_TOKEN=GCHooHemP2FYZo2D4CyB
-REWORK_COMPANY_ID=2854
 
 # Optional
 PORT=3000
