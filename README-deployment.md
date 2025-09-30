@@ -7,7 +7,7 @@ Node.js webhook server that automatically synchronizes Rework leave requests wit
 ### 1. Environment Variables
 
 
-# Optional
+### Optional
 PORT=3000
 ```
 
