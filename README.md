@@ -2,6 +2,20 @@
 
 Een geavanceerde Node.js webhook server die **Rework verlofaanvragen** automatisch synchroniseert met **vPlan planning**. Wanneer verlof wordt goedgekeurd in Rework, verschijnt het direct als afwezigheid in de juiste persoon's vPlan planning.
 
+---
+
+## 📦 Repository Projecten
+
+Deze repository bevat twee applicaties:
+
+### 1. **Rework ↔ vPlan Integration** (hoofddirectory)
+Webhook server voor automatische synchronisatie van verlofaanvragen tussen Rework en vPlan.
+
+### 2. **Vernie CNC Assistent** ([`/vernie-cnc-assistent`](vernie-cnc-assistent/))
+Een intelligente assistent voor CNC machineoperaties en productieondersteuning. Zie [Vernie CNC Assistent README](vernie-cnc-assistent/README.md) voor meer informatie.
+
+---
+
 ## 🎯 Wat doet deze integratie?
 
 Deze server luistert naar Rework webhook events en voert automatisch acties uit in vPlan:
